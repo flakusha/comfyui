@@ -1,0 +1,221 @@
+[project]
+name = "ComfyUI"
+version = "0.42.0"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+
+dependencies = [
+  "comfyui-frontend-package>=1.55.18",
+  "comfyui-workflow-templates>=0.11.89",
+  "comfyui-embedded-docs>=0.5.14",
+  "torch",
+  "torchsde",
+  "torchvision",
+  "numpy>=1.25.0",
+  "einops",
+  "transformers>=4.50.3",
+  "tokenizers>=0.13.3",
+  "sentencepiece",
+  "safetensors>=0.4.2",
+  "aiohttp>=3.11.8",
+  "yarl>=1.18.0",
+  "pyyaml",
+  "Pillow",
+  "scipy",
+  "tqdm",
+  "psutil",
+  "alembic",
+  "SQLAlchemy>=2.0.0",
+  "filelock",
+  "av>=17.0.0",
+  "comfy-kitchen>=0.2.39",
+  "comfy-aimdo>=0.5.6",
+  "requests",
+  "simpleeval>=1.0.0",
+  "blake3",
+  # non essential dependencies:
+  "kornia>=0.7.1",
+  "spandrel",
+  "pydantic~=2.0",
+  "pydantic-settings~=2.0",
+  "PyOpenGL>=3.1.8",
+  "comfy-angle",
+]
+
+[project.optional-dependencies]
+"rocm" = [
+  # ROCm wheels exist only for linux x86_64; gated so other platforms resolve from PyPI.
+  # torchaudio is not a dependency at all (#16457): core has zero torchaudio imports,
+  # and an installed CUDA torchaudio breaks transformers imports under ROCm.
+  "torch==2.14.1+rocm7.14; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torchvision==0.29.1+rocm7.14; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "triton-rocm>=3.8.0,<3.9; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+"cuda" = [
+  # CUDA wheels for linux x86_64 only, same gate as rocm; other platforms keep the PyPI
+  # torch (default CUDA build). Pinned to the same torch/torchvision pair the ROCm extra uses.
+  # torch 2.14.1 requires triton~=3.8.0, which PyPI serves for cp314.
+  "torch==2.14.1+cu130; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torchvision==0.29.1+cu130; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "triton>=3.8.0,<3.9; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+"manager" = ["comfyui_manager>=4.2.2"]
+
+# ONNX runtime backends. Exactly one of these may be enabled at a time: all three
+# distributions ship the same `onnxruntime` module, so two installed together
+# shadow each other. Always sync with your hardware extra (--extra rocm or
+# --extra cuda) alongside the backend extra so the resolver keeps matching torch
+# wheels; the two hardware extras are mutually exclusive and cannot be combined.
+"onnx-cpu" = ["onnx", "onnxruntime"]
+"onnx-rocm" = ["onnx", "onnxruntime-rocm"]
+"onnx-gpu" = ["onnx", "onnxruntime-gpu"]
+
+# SageAttention v1 only — pure-python wheel, no compiled kernels, runs on the ROCm triton backend.
+# v2+ requires an nvcc/CUDA toolchain so is deliberately excluded.
+"sage" = ["sageattention==1.0.6"]
+
+# Mirrors tests-unit/requirements.txt (upstream-canonical source, left untouched).
+"dev" = ["pytest>=7.8.0", "pytest-aiohttp", "pytest-asyncio", "websocket-client", "cryptography", "ruff"]
+[project.urls]
+homepage = "https://www.comfy.org/"
+repository = "https://github.com/comfyanonymous/ComfyUI"
+documentation = "https://docs.comfy.org/"
+
+[tool.ruff]
+lint.select = [
+  "N805", # invalid-first-argument-name-for-method
+  "S307", # suspicious-eval-usage
+  "S102", # exec
+  "E",
+  "T", # print-usage
+  "W",
+  # The "F" series in Ruff stands for "Pyflakes" rules, which catch various Python syntax errors and undefined names.
+  # See all rules here: https://docs.astral.sh/ruff/rules/#pyflakes-f
+  "F",
+]
+
+lint.ignore = ["E501", "E722", "E731", "E712", "E402", "E741"]
+
+exclude = ["*.ipynb", "**/generated/*.pyi"]
+
+# Fork CLI scripts: their prints are their output contract, not debug noise.
+[tool.ruff.lint.per-file-ignores]
+"scripts/custom_nodes_deps.py" = ["T201"]
+"scripts/local_common.py" = ["T201"]
+"scripts/update_local.py" = ["T201"]
+"scripts/start_local.py" = ["T201"]
+
+[tool.pylint]
+master.py-version = "3.10"
+master.extension-pkg-allow-list = [
+  "pydantic",
+]
+reports.output-format = "colorized"
+similarities.ignore-imports = "yes"
+messages_control.disable = [
+  "missing-module-docstring",
+  "missing-class-docstring",
+  "missing-function-docstring",
+  "line-too-long",
+  "too-few-public-methods",
+  "too-many-public-methods",
+  "too-many-instance-attributes",
+  "too-many-positional-arguments",
+  "broad-exception-raised",
+  "too-many-lines",
+  "invalid-name",
+  "unused-argument",
+  "broad-exception-caught",
+  "consider-using-with",
+  "fixme",
+  "too-many-statements",
+  "too-many-branches",
+  "too-many-locals",
+  "too-many-arguments",
+  "too-many-return-statements",
+  "too-many-nested-blocks",
+  "duplicate-code",
+  "abstract-method",
+  "superfluous-parens",
+  "arguments-differ",
+  "redefined-builtin",
+  "unnecessary-lambda",
+  "dangerous-default-value",
+  "invalid-overridden-method",
+  # next warnings should be fixed in future
+  "bad-classmethod-argument", # Class method should have 'cls' as first argument
+  "wrong-import-order", # Standard imports should be placed before third party imports
+  "ungrouped-imports",
+  "unnecessary-pass",
+  "unnecessary-lambda-assignment",
+  "no-else-return",
+  "unused-variable",
+]
+
+[tool.uv]
+# ComfyUI runs from its source checkout; uv only manages the environment.
+package = false
+index-strategy = "unsafe-best-match"
+# torch/torchvision resolve to different wheels per GPU extra (see [tool.uv.sources]), so
+# uv cannot put them in one resolution. Declaring them as
+# conflicting forks the lock and makes `uv sync --extra rocm --extra cuda` fail loudly
+# instead of silently picking one index.
+conflicts = [
+
+  [{ extra = "rocm" }, { extra = "cuda" }],
+]
+
+# was-ns declares `opencv-python-headless[ffmpeg]`, an extra opencv has never published;
+# uv warns on every re-resolution. The wheel ships FFMPEG: YES regardless, so the extra
+# is dropped here instead of patching the node, which is a gitignored clone.
+override-dependencies = ["opencv-python-headless"]
+
+[tool.uv.workspace]
+# Custom nodes are plain git clones (gitignored), but each ships a pyproject.toml
+# with [project] name+version, so uv can resolve their dependencies into the same
+# lock as core instead of letting the Manager pip-install into .venv behind the
+# lock's back.
+members = ["custom_nodes/*"]
+
+# impact-pack declares `sam2 @ git+...` while the package's metadata name is
+# `sam-2`; uv refuses that mismatch at lock time, so this node stays out of the
+# workspace and is installed by hand instead.
+exclude = ["custom_nodes/comfyui-impact-pack"]
+
+[tool.uv.sources]
+# Each package gets one source per GPU extra, discriminated by `extra`; a plain `uv lock`
+# enables every extra at once, so the two entries would otherwise be ambiguous for torch.
+# `conflicts` below makes uv resolve rocm and cuda in separate forks, so exactly one of
+# these entries applies per fork.
+torch = [
+  { index = "torch-rocm", extra = "rocm", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "torch-cuda", extra = "cuda", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+torchvision = [
+  { index = "torch-rocm", extra = "rocm", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "torch-cuda", extra = "cuda", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+triton-rocm = [
+  { index = "torch-rocm-triton", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
+[[tool.uv.index]]
+name = "torch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.14"
+
+[[tool.uv.index]]
+name = "torch-rocm-triton"
+url = "https://download.pytorch.org/whl"
+explicit = true
+
+[[tool.uv.index]]
+name = "torch-cuda"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
