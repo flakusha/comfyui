@@ -5,6 +5,107 @@ readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 
+dependencies = [
+  "comfyui-frontend-package>=1.55.18",
+  "comfyui-workflow-templates>=0.11.89",
+  "comfyui-embedded-docs>=0.5.14",
+  "torch",
+  "torchsde",
+  "torchvision",
+  "numpy>=1.25.0",
+  "einops",
+  "transformers>=4.50.3",
+  "tokenizers>=0.13.3",
+  "sentencepiece",
+  "safetensors>=0.4.2",
+  "aiohttp>=3.11.8",
+  "yarl>=1.18.0",
+  "pyyaml",
+  "Pillow",
+  "scipy",
+  "tqdm",
+  "psutil",
+  "alembic",
+  "SQLAlchemy>=2.0.0",
+  "filelock",
+  "av>=17.0.0",
+  "comfy-kitchen>=0.2.39",
+  "comfy-aimdo>=0.5.6",
+  "requests",
+  "simpleeval>=1.0.0",
+  "blake3",
+  # non essential dependencies:
+  "kornia>=0.7.1",
+  "spandrel",
+  "pydantic~=2.0",
+  "pydantic-settings~=2.0",
+  "PyOpenGL>=3.1.8",
+  "comfy-angle",
+]
+
+[project.optional-dependencies]
+"rocm" = [
+  # ROCm wheels exist only for linux x86_64; gated so other platforms resolve from PyPI.
+  # torchaudio is not a dependency at all (#16457): core has zero torchaudio imports,
+  # and an installed CUDA torchaudio breaks transformers imports under ROCm.
+  "torch==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torchvision==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  # torch's rocm10 wheel requires AMD's own triton build, published under the plain
+  # `triton` name on its own index (AMD's amd-rocm index), not a separate triton package.
+  # 0.29.0a0 is AMD's only torchvision for rocm10.1.0 — pinned deliberately as a trial;
+  # stable fallback if it misbehaves is the rocm10.0.0 track (2.14.0+rocm10.0.0 / 0.29.0).
+  "triton==3.8.0+git669b31ac.rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  # bitsandbytes floor borrowed from InvokeAI's rocm extra. 0.50.2 is the first line whose
+  # wheel carries the ROCm backends this stack needs: the installed manylinux wheel ships
+  # libbitsandbytes_rocm714.so (plus rocm715.so, which rocm-10-era torch wheels hit — they
+  # report HIP 7.15), so the same floor survives a later switch to AMD's index. The package
+  # already resolves transitively at 0.50.2 via comfyui-qwenvl; the pin only stops a future
+  # resolution from dropping below the first ROCm-usable release.
+  "bitsandbytes>=0.50.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  # The split rocm runtime — pulled in by torch's own `rocm[libraries]==10.1.0` +
+  # `rocm-bootstrap` requirement — exists only on AMD's index, and uv applies index sources
+  # to direct requirements only, so the family must be listed here by name (same reason
+  # InvokeAI lists every rocm package in its extra). Without these lines resolution falls
+  # through to PyPI, whose only `rocm` is an unrelated 0.1.0 placeholder. 10.1.0 is the SDK
+  # build the 2.14.0+rocm10.1.0 pair ships against; `rocm` itself is sdist-only on AMD's
+  # index, so its dependencies are declared statically in [[tool.uv.dependency-metadata]].
+  # Device kernels are scoped to gfx1100: this machine's only GPU is an RX 7900 XTX.
+  "rocm==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-core==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-libraries==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx1100==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx1100==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx1100==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+"cuda" = [
+  # CUDA wheels for linux x86_64 only, same gate as rocm; other platforms keep the PyPI
+  # torch (default CUDA build). Deliberately newer than the rocm pair: AMD's index has no
+  # 2.14.1/0.29.1 rocm10 builds, so the rocm extra pins 2.14.0+rocm10.1.0/0.29.0a0 while cuda
+  # stays on 2.14.1+cu130/0.29.1+cu130; the rocm/cuda conflicts entry keeps the forks apart.
+  # torch 2.14.1 requires triton~=3.8.0, which PyPI serves for cp314.
+  "torch==2.14.1+cu130; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torchvision==0.29.1+cu130; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "triton>=3.8.0,<3.9; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+"manager" = ["comfyui_manager>=4.2.2"]
+
+# ONNX runtime backends. Exactly one of these may be enabled at a time: all three
+# distributions ship the same `onnxruntime` module, so two installed together
+# shadow each other. Always sync with your hardware extra (--extra rocm or
+# --extra cuda) alongside the backend extra so the resolver keeps matching torch
+# wheels; the two hardware extras are mutually exclusive and cannot be combined.
+"onnx-cpu" = ["onnx", "onnxruntime"]
+"onnx-rocm" = ["onnx", "onnxruntime-rocm"]
+"onnx-gpu" = ["onnx", "onnxruntime-gpu"]
+
+# SageAttention v1 only — pure-python wheel, no compiled kernels, runs on the ROCm triton backend.
+# v2+ requires an nvcc/CUDA toolchain so is deliberately excluded.
+"sage" = ["sageattention==1.0.6"]
+
+# Mirrors tests-unit/requirements.txt (upstream-canonical source, left untouched).
+"dev" = ["pytest>=7.8.0", "pytest-aiohttp", "pytest-asyncio", "websocket-client", "cryptography", "ruff"]
 [project.urls]
 homepage = "https://www.comfy.org/"
 repository = "https://github.com/comfyanonymous/ComfyUI"
@@ -16,7 +117,7 @@ lint.select = [
   "S307", # suspicious-eval-usage
   "S102", # exec
   "E",
-  "T",    # print-usage
+  "T", # print-usage
   "W",
   # The "F" series in Ruff stands for "Pyflakes" rules, which catch various Python syntax errors and undefined names.
   # See all rules here: https://docs.astral.sh/ruff/rules/#pyflakes-f
@@ -26,6 +127,13 @@ lint.select = [
 lint.ignore = ["E501", "E722", "E731", "E712", "E402", "E741"]
 
 exclude = ["*.ipynb", "**/generated/*.pyi"]
+
+# Fork CLI scripts: their prints are their output contract, not debug noise.
+[tool.ruff.lint.per-file-ignores]
+"scripts/custom_nodes_deps.py" = ["T201"]
+"scripts/local_common.py" = ["T201"]
+"scripts/update_local.py" = ["T201"]
+"scripts/start_local.py" = ["T201"]
 
 [tool.pylint]
 master.py-version = "3.10"
@@ -65,11 +173,102 @@ messages_control.disable = [
   "dangerous-default-value",
   "invalid-overridden-method",
   # next warnings should be fixed in future
-  "bad-classmethod-argument",  # Class method should have 'cls' as first argument
-  "wrong-import-order",  # Standard imports should be placed before third party imports
+  "bad-classmethod-argument", # Class method should have 'cls' as first argument
+  "wrong-import-order", # Standard imports should be placed before third party imports
   "ungrouped-imports",
   "unnecessary-pass",
   "unnecessary-lambda-assignment",
   "no-else-return",
   "unused-variable",
 ]
+
+[tool.uv]
+# ComfyUI runs from its source checkout; uv only manages the environment.
+package = false
+index-strategy = "unsafe-best-match"
+# torch/torchvision resolve to different wheels per GPU extra (see [tool.uv.sources]), so
+# uv cannot put them in one resolution. Declaring them as
+# conflicting forks the lock and makes `uv sync --extra rocm --extra cuda` fail loudly
+# instead of silently picking one index.
+conflicts = [
+
+  [{ extra = "rocm" }, { extra = "cuda" }],
+]
+
+# was-ns declares `opencv-python-headless[ffmpeg]`, an extra opencv has never published;
+# uv warns on every re-resolution. The wheel ships FFMPEG: YES regardless, so the extra
+# is dropped here instead of patching the node, which is a gitignored clone.
+override-dependencies = ["opencv-python-headless"]
+
+[tool.uv.workspace]
+# Custom nodes are plain git clones (gitignored), but each ships a pyproject.toml
+# with [project] name+version, so uv can resolve their dependencies into the same
+# lock as core instead of letting the Manager pip-install into .venv behind the
+# lock's back.
+members = ["custom_nodes/*"]
+
+# impact-pack declares `sam2 @ git+...` while the package's metadata name is
+# `sam-2`; uv refuses that mismatch at lock time, so this node stays out of the
+# workspace and is installed by hand instead.
+exclude = ["custom_nodes/comfyui-impact-pack"]
+
+[tool.uv.sources]
+# Each package gets one source per GPU extra, discriminated by `extra`; a plain `uv lock`
+# enables every extra at once, so the two entries would otherwise be ambiguous for torch.
+# `conflicts` below makes uv resolve rocm and cuda in separate forks, so exactly one of
+# these entries applies per fork.
+torch = [
+  { index = "amd-rocm", extra = "rocm", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "torch-cuda", extra = "cuda", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+torchvision = [
+  { index = "amd-rocm", extra = "rocm", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "torch-cuda", extra = "cuda", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+# AMD ships its triton build under the plain `triton` name; the rocm extra lists triton
+# directly so this extra-scoped source applies (InvokeAI's pattern). Only the rocm fork
+# takes it; cuda and the no-extra resolution keep PyPI's triton.
+triton = [
+  { index = "amd-rocm", extra = "rocm", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+]
+# Index sources apply to direct requirements only — a transitive dep never sees these
+# entries, which is why the rocm extra lists the whole rocm family by name. These entries
+# route those direct requirements to the explicit amd-rocm index instead of PyPI, whose
+# only `rocm` is an unrelated 0.1.0 placeholder.
+rocm                           = { index = "amd-rocm" }
+rocm-sdk-core                  = { index = "amd-rocm" }
+rocm-sdk-libraries             = { index = "amd-rocm" }
+rocm-sdk-device-gfx1100        = { index = "amd-rocm" }
+amd-torch-device-gfx1100       = { index = "amd-rocm" }
+amd-torchvision-device-gfx1100 = { index = "amd-rocm" }
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
+[[tool.uv.index]]
+name = "torch-cuda"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "amd-rocm"
+url = "https://stable.repo.amd.com/rocm/whl-next/"
+# explicit: the index mirrors common PyPI packages (numpy, sympy, pillow, filelock,
+# jinja2, networkx, setuptools, typing-extensions, ...) next to the torch/rocm family,
+# and with index-strategy = "unsafe-best-match" a non-explicit index could capture the
+# resolution of anything it hosts. Same rule InvokeAI applies to this index.
+explicit = true
+
+[[tool.uv.dependency-metadata]]
+# `rocm` is published only as an sdist whose build asks the machine's GPU which kernel
+# package to require, so the lock would depend on the machine that wrote it. Static
+# metadata (InvokeAI's approach) supplies its target-independent requirements instead;
+# the kernel package is listed in the rocm extra directly.
+name = "rocm"
+version = "10.1.0"
+requires-dist = [
+  "rocm-sdk-core==10.1.0",
+  "rocm-sdk-libraries==10.1.0; extra == 'libraries'",
+]
+provides-extras = ["libraries"]
