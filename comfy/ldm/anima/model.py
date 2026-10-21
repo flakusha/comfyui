@@ -1,7 +1,7 @@
 from comfy.ldm.cosmos.predict2 import MiniTrainDIT
+from comfy.ldm.modules.attention import AttentionTensorContainer, ComfyAttention, optimized_attention
 import torch
 from torch import nn
-import torch.nn.functional as F
 
 
 def rotate_half(x):
@@ -48,6 +48,7 @@ class Attention(nn.Module):
         self.head_dim = head_dim
         self.query_dim = query_dim
         self.context_dim = context_dim
+        self.comfy_attention = ComfyAttention()
 
         self.q_proj = operations.Linear(query_dim, inner_dim, bias=False, device=device, dtype=dtype)
         self.q_norm = operations.RMSNorm(self.head_dim, eps=1e-6, device=device, dtype=dtype)
@@ -77,9 +78,10 @@ class Attention(nn.Module):
             cos, sin = position_embeddings_context
             key_states = apply_rotary_pos_emb(key_states, cos, sin)
 
-        attn_output = F.scaled_dot_product_attention(query_states, key_states, value_states, attn_mask=mask)
+        query_states, key_states, value_states = AttentionTensorContainer(query_states), AttentionTensorContainer(key_states), AttentionTensorContainer(value_states)
+        attn_output = optimized_attention(query_states, key_states, value_states, self.n_heads, mask=mask, skip_reshape=True, preferred_attention=self.comfy_attention)
 
-        attn_output = attn_output.transpose(1, 2).reshape(*input_shape, -1).contiguous()
+        attn_output = attn_output.reshape(*input_shape, -1)
         attn_output = self.o_proj(attn_output)
         return attn_output
 
