@@ -3,7 +3,7 @@ name = "ComfyUI"
 version = "0.42.0"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 
 dependencies = [
   "comfyui-frontend-package>=1.57.1",
@@ -191,7 +191,6 @@ index-strategy = "unsafe-best-match"
 # conflicting forks the lock and makes `uv sync --extra rocm --extra cuda` fail loudly
 # instead of silently picking one index.
 conflicts = [
-
   [{ extra = "rocm" }, { extra = "cuda" }],
 ]
 
@@ -235,11 +234,11 @@ triton = [
 # entries, which is why the rocm extra lists the whole rocm family by name. These entries
 # route those direct requirements to the explicit amd-rocm index instead of PyPI, whose
 # only `rocm` is an unrelated 0.1.0 placeholder.
-rocm                           = { index = "amd-rocm" }
-rocm-sdk-core                  = { index = "amd-rocm" }
-rocm-sdk-libraries             = { index = "amd-rocm" }
-rocm-sdk-device-gfx1100        = { index = "amd-rocm" }
-amd-torch-device-gfx1100       = { index = "amd-rocm" }
+rocm = { index = "amd-rocm" }
+rocm-sdk-core = { index = "amd-rocm" }
+rocm-sdk-libraries = { index = "amd-rocm" }
+rocm-sdk-device-gfx1100 = { index = "amd-rocm" }
+amd-torch-device-gfx1100 = { index = "amd-rocm" }
 amd-torchvision-device-gfx1100 = { index = "amd-rocm" }
 
 [[tool.uv.index]]
