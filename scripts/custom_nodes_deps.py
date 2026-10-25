@@ -11,6 +11,8 @@ Safety invariants:
   - NEVER passes ``--upgrade`` (would upgrade existing packages)
   - Only installs packages that are genuinely missing from the venv
   - Version conflicts on already-installed packages are warnings, not auto-fixed
+  - Requirements whose environment marker does not match this platform are ignored
+    (e.g. ``amd-adlx ; platform_system == 'Windows'`` is not installable on Linux)
 """
 
 from __future__ import annotations
@@ -84,6 +86,22 @@ def discover_dep_files() -> list[tuple[Path, str]]:
     return results
 
 
+def marker_applies(req) -> bool:
+    """True if the requirement's environment marker matches this machine.
+
+    Marked requirements (e.g. ``amd-adlx ; platform_system == \"Windows\"``)
+    are not installable elsewhere, so they must not be audited or installed
+    on this platform.
+    """
+    marker = getattr(req, "marker", None)
+    if marker is None:
+        return True
+    try:
+        return bool(marker.evaluate())
+    except Exception:
+        return True
+
+
 def parse_pyproject(path: Path) -> list[DepEntry]:
     """Parse [project].dependencies from a pyproject.toml."""
     node = path.parent.name
@@ -107,6 +125,9 @@ def parse_pyproject(path: Path) -> list[DepEntry]:
         try:
             req = Requirement(raw)
         except Exception:
+            continue
+        # Skip requirements gated on a platform/env we are not on
+        if not marker_applies(req):
             continue
         # Skip URL-based requirements (e.g. sam2@git+https://...)
         if "@" in raw and ("://" in raw or "git+" in raw):
@@ -146,6 +167,9 @@ def parse_requirements_txt(path: Path) -> list[DepEntry]:
         try:
             req = Requirement(line)
         except Exception:
+            continue
+        # Skip requirements gated on a platform/env we are not on
+        if not marker_applies(req):
             continue
         # Skip URL-based requirements (e.g. sam2@git+https://...)
         if "@" in line and ("://" in line or "git+" in line):
