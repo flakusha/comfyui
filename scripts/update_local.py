@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Local updater: fetch upstream master (FF-only) -> guarded mirror to origin/master -> rebase
-the patch stack onto master -> uv sync (rocm + manager + dev) -> custom-node deps -> gates.
+the patch stack onto master -> uv sync (rocm + manager + dev) -> custom-node manifest
+sync (pinned refs; a refusal aborts the run) -> custom-node deps -> gates.
 
 runbook
 routine: python scripts/update_local.py
 --mirror      auto-approve the origin/master mirror push (default asks [y/N]; it mutates a
               public remote). --no-mirror skips it (push manually: git push origin master:master).
---force       accept a rebase that truly lost commits (inspect the printed list first)
+--force       accept a rebase that truly lost commits (inspect the printed list first);
+              also re-syncs even when the pre-sync dry-run reports no changes
 --skip-gates  skip post-bump ruff/import checks
 --tests       also run the full upstream tests-unit suite (opt-in; the suite is
               an upstream concern, not this fork's gate)
@@ -21,6 +23,7 @@ rollback: mid-rebase -> git rebase --abort ; after -> git reset --hard refs/pre-
 --inexact required: bare uv sync removes custom-node packages
 out-of-band venv installs (uv pip install ...) are silently reverted by the sync; the
   updater prints a drift note before syncing (Python port only; no shell counterpart)
+  so are the up-to-date sync skip and the .local-state/ state maps
 companion pin policy: the [project] dependencies floors in pyproject.toml are the
   spec; requirements.txt exact pins drive them — this script rewrites each managed
   floor to >=<requirements-exact>, so a fresh-clone bare `uv sync` reproduces the
@@ -31,7 +34,9 @@ FF safety at both levels: `fetch upstream master:master` without + refuses a non
 `push origin master:master` is refused by the remote — a diverged mirror surfaces as an
 error, never a clobber.
 
-Python port of update-local.sh: same steps, same exit codes, same messages.
+Python port of update-local.sh: same steps, same exit codes, same messages —
+except step 5's manifest sync, which is Python-only and fails the run on a
+refused/failed node (the shell's `|| true` would have carried on silently).
 Windows-safe: every subprocess call is an argv list, the environment is a dict
 copy, and all paths go through pathlib. Pure, git-free pieces (flag parse,
 requirements pins, patch-id set diffing) are separate functions for testing.
@@ -40,11 +45,14 @@ requirements pins, patch-id set diffing) are separate functions for testing.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from local_common import (
@@ -65,6 +73,13 @@ HARDWARE_EXTRAS = frozenset({"rocm", "cuda"})
 REQUIREMENTS_TXT = REPO_ROOT / "requirements.txt"
 PYPROJECT_TOML = REPO_ROOT / "pyproject.toml"
 CUSTOM_NODES_DEPS = REPO_ROOT / "scripts" / "custom_nodes_deps.py"
+LOCK_FILE = REPO_ROOT / "uv.lock"
+# Machine-local updater state (gitignored). Purely a cache: uv.lock / the
+# requirements pins / a fresh dry-run stay the source of truth, and a missing
+# or corrupt file falls back to full work.
+STATE_DIR = REPO_ROOT / ".local-state"
+STATE_FILE = STATE_DIR / "update-local.json"
+STATE_SCHEMA = 1
 _IMPORT_GATE = "import server, execution, nodes"
 # grep -E '^[A-Za-z0-9._-]+==' : name is every leading package-name char up to the first ==
 _PIN_LINE = re.compile(r"^([A-Za-z0-9._-]+)==(.*)$")
@@ -103,7 +118,10 @@ def parse_args(argv: list[str] | None = None) -> Options:
         help="skip the origin/master mirror push",
     )
     parser.add_argument(
-        "--force", action="store_true", help="accept a rebase that truly lost commits"
+        "--force",
+        action="store_true",
+        help="accept a rebase that truly lost commits; also sync even when the "
+        "dry-run reports no changes",
     )
     parser.add_argument(
         "--skip-gates",
@@ -311,6 +329,55 @@ def sha_for_patch_id(pairs: list[tuple[str, str]], pid: str) -> str | None:
     return None
 
 
+def inputs_fingerprint(parts: list[str]) -> str:
+    """sha256 over NUL-joined inputs: uv.lock / requirements / pyproject / extras text."""
+    digest = hashlib.sha256()
+    for part in parts:
+        digest.update(part.encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def load_state(path: Path) -> dict | None:
+    """The persisted state map, or None when absent/corrupt/wrong-schema.
+
+    None always means "do the full work": the state is a cache, and the lock,
+    requirements pins, and dry-run output stay the source of truth.
+    """
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    schema = state.get("schema")
+    if isinstance(schema, bool) or schema != STATE_SCHEMA:
+        return None
+    return state
+
+
+def state_is_current(
+    state: dict | None, fingerprint: str, extras: tuple[str, ...]
+) -> bool:
+    """True only when the state's recorded inputs hash and extras match today's."""
+    if not isinstance(state, dict):
+        return False
+    return state.get("inputs_sha256") == fingerprint and list(
+        state.get("extras") or []
+    ) == list(extras)
+
+
+def save_state(path: Path, state: dict) -> None:
+    """Best-effort persistence; a failed write only costs the next run its cache."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        print(f"note: could not write {path.name}: {exc}", file=sys.stderr)
+
+
 # ---------------------------------------------------------------------------
 # Subprocess pieces
 # ---------------------------------------------------------------------------
@@ -395,12 +462,17 @@ def run_sync(extra_names: tuple[str, ...]) -> None:
         )
 
 
-def warn_drift(extra_names: tuple[str, ...], skip: frozenset[str]) -> None:
+def warn_drift(
+    extra_names: tuple[str, ...], skip: frozenset[str]
+) -> tuple[int, dict[str, str], dict[str, str]]:
     """Dry-run the sync before it runs and flag out-of-band venv changes it will revert.
 
     `skip` holds pending 4b bump names: a bump is a dry-run delta too, but it is
     intended, not drift. Warn-and-continue: the sync still runs, a bad update
-    beats a failed one.
+    beats a failed one. Returns (uv's exit code, would-remove, would-install);
+    both maps empty means the real sync would be a no-op — but only trust that
+    when the exit code is 0: a failed dry-run proves nothing, and the caller
+    must run the real sync (its failure aborts with the rollback pointer).
     """
     cmd = sync_cmd(extra_names)
     cmd.insert(2, "--dry-run")
@@ -414,19 +486,25 @@ def warn_drift(extra_names: tuple[str, ...], skip: frozenset[str]) -> None:
         check=False,
     )
     # uv prints the transaction block on stderr when stdout is captured
+    would_remove, would_install = parse_sync_deltas(proc.stdout + proc.stderr)
     drift = [
-        d
-        for d in drift_from_deltas(*parse_sync_deltas(proc.stdout + proc.stderr))
-        if d[0] not in skip
+        d for d in drift_from_deltas(would_remove, would_install) if d[0] not in skip
     ]
-    if not drift:
-        return
-    print(
-        "note: venv drift (uv pip install -U is not durable here; companion floors"
-        " follow requirements.txt automatically — ask upstream to bump requirements.txt):"
-    )
-    for name, current, lock in drift:
-        print(f"  - {name}: installed {current} -> lock {lock if lock else 'removed'}")
+    if drift:
+        print(
+            "note: venv drift (uv pip install -U is not durable here; companion floors"
+            " follow requirements.txt automatically — ask upstream to bump requirements.txt):"
+        )
+        for name, current, lock in drift:
+            print(f"  - {name}: installed {current} -> lock {lock if lock else 'removed'}")
+    return proc.returncode, would_remove, would_install
+
+
+def sync_required(
+    force: bool, dry_run_rc: int, removed: dict[str, str], installed: dict[str, str]
+) -> bool:
+    """True when the real sync must run: --force, a failed dry-run, or any delta."""
+    return force or dry_run_rc != 0 or bool(removed) or bool(installed)
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +618,20 @@ def main(argv: list[str] | None = None) -> int:
     # --extra dev supplies pytest (and ruff) for the gates below.
     requirements = REQUIREMENTS_TXT.read_text(encoding="utf-8") if REQUIREMENTS_TXT.exists() else ""
     pyproject_text = PYPROJECT_TOML.read_text(encoding="utf-8")
+    prior = load_state(STATE_FILE)
+    if state_is_current(
+        prior,
+        inputs_fingerprint(
+            [
+                LOCK_FILE.read_text(encoding="utf-8") if LOCK_FILE.exists() else "",
+                requirements,
+                pyproject_text,
+                ",".join(opts.extras),
+            ]
+        ),
+        opts.extras,
+    ):
+        print("state: these exact inputs passed a full update last run", f"({STATE_FILE.relative_to(REPO_ROOT)})")
     req_pins = extract_pins(requirements)
     req_map = dict(req_pins)
     proj_floors = parse_pyproject_floors(pyproject_text)
@@ -554,9 +646,18 @@ def main(argv: list[str] | None = None) -> int:
                 f"notice: {name} is no longer ==-pinned in requirements.txt; "
                 f"leaving its pyproject floor (>= {proj_floors[name]}) as-is."
             )
-    warn_drift(opts.extras, skip=frozenset(name for name, _ in pending))
-    print("=== uv sync (rocm + manager + dev) ===")
-    run_sync(opts.extras)
+    dry_run_rc, would_remove, would_install = warn_drift(
+        opts.extras, skip=frozenset(name for name, _ in pending)
+    )
+    sync_mode = "applied"
+    if sync_required(opts.force, dry_run_rc, would_remove, would_install):
+        print("=== uv sync (rocm + manager + dev) ===")
+        run_sync(opts.extras)
+    else:
+        # the dry-run above just proved the real sync a no-op; skipping it keeps
+        # --inexact from re-auditing an env the lock already matches
+        sync_mode = "skipped-clean"
+        print("uv sync: dry-run found no changes; environment already matches uv.lock")
 
     # 4b. companion floors: pyproject [project] dependencies pins are the spec;
     # requirements.txt exact pins drive them. Rewrite each managed floor to
@@ -578,6 +679,7 @@ def main(argv: list[str] | None = None) -> int:
                 "(stack rollback: git reset --hard refs/pre-rebase-backup)."
             )
         run_sync(opts.extras)
+        sync_mode = "applied-post-bump"
         if run_cmd(["git", "add", "pyproject.toml"]) != 0 or run_cmd(
             ["git", "commit", "-m", "Update companion pins to requirements exacts"]
         ) != 0:
@@ -586,7 +688,14 @@ def main(argv: list[str] | None = None) -> int:
                 "tree — commit pyproject.toml by hand, then rerun."
             )
 
-    # 5. custom node deps the workspace/lock missed (install ends with its built-in post-install audit)
+    # 5. custom node checkouts (manifest-pinned refs), then the deps the
+    # workspace/lock missed (install ends with its built-in post-install audit)
+    print("=== custom node repositories (manifest refs) ===")
+    if run_cmd([str(venv_python()), str(CUSTOM_NODES_DEPS), "sync"]) != 0:
+        fail(
+            "manifest sync failed; aborting update "
+            "(stack rollback: git reset --hard refs/pre-rebase-backup)."
+        )
     print("=== custom node dependencies ===")
     run_quietly([str(venv_python()), str(CUSTOM_NODES_DEPS), "install"])
 
@@ -620,6 +729,27 @@ def main(argv: list[str] | None = None) -> int:
 
     # everything passed — the backup ref has served its purpose
     run_cmd(["git", "update-ref", "-d", BACKUP_REF])
+
+    # Record what this run applied. 4b may have rewritten pyproject.toml, so the
+    # fingerprint reads it fresh. Cache only: the next run's dry-run still
+    # decides, and a missing/corrupt file just means full work next time.
+    lock_text = LOCK_FILE.read_text(encoding="utf-8") if LOCK_FILE.exists() else ""
+    pyproject_now = (
+        PYPROJECT_TOML.read_text(encoding="utf-8") if PYPROJECT_TOML.exists() else ""
+    )
+    save_state(
+        STATE_FILE,
+        {
+            "schema": STATE_SCHEMA,
+            "inputs_sha256": inputs_fingerprint(
+                [lock_text, requirements, pyproject_now, ",".join(opts.extras)]
+            ),
+            "extras": list(opts.extras),
+            "requirements": dict(req_pins),
+            "sync": sync_mode,
+        },
+    )
+    print(f"state: recorded {STATE_FILE.relative_to(REPO_ROOT)}")
 
     print("update complete.")
     return 0
