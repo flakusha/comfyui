@@ -13,12 +13,23 @@ Safety invariants:
   - Version conflicts on already-installed packages are warnings, not auto-fixed
   - Requirements whose environment marker does not match this platform are ignored
     (e.g. ``amd-adlx ; platform_system == 'Windows'`` is not installable on Linux)
+
+Subcommands:
+  audit    report missing/conflicting/OK packages
+  install  install missing packages (uv pip install)
+  sync     clone/checkout custom_nodes/* per custom_nodes.manifest.toml (git
+           only, no packages). sync owns ref pinning for manifest-managed
+           nodes and replaces ComfyUI-Manager's install/update for them;
+           once every node is manifest-managed, the "manager" extra in
+           pyproject.toml can be dropped (deliberately left in place).
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -297,6 +308,49 @@ def run_audit(deps: dict[str, DepEntry]) -> list[AuditResult]:
 
 
 # ---------------------------------------------------------------------------
+# Persisted state map
+# ---------------------------------------------------------------------------
+
+
+DEPS_STATE_FILE = (
+    Path(__file__).resolve().parent.parent / ".local-state" / "custom-nodes-deps.json"
+)
+
+
+def deps_fingerprint() -> str:
+    """sha256 over every discovered dep file's bytes (path-delimited, discovery order)."""
+    digest = hashlib.sha256()
+    for path, _source_type in discover_dep_files():
+        digest.update(str(path).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def save_dep_state(results: list[AuditResult]) -> None:
+    """Record installed versions after a fully clean audit (best-effort cache).
+
+    The audit itself still runs every time — it is the only venv-side check for
+    packages the lock does not own; the map records what it last verified.
+    """
+    try:
+        state = {
+            "schema": 1,
+            "inputs_sha256": deps_fingerprint(),
+            "versions": {
+                r.package: r.installed_version for r in results if r.installed_version
+            },
+        }
+        DEPS_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        DEPS_STATE_FILE.write_text(
+            json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        print(f"note: could not write {DEPS_STATE_FILE.name}: {exc}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 
@@ -338,6 +392,461 @@ def install_missing(
     for r in post:
         r.declared_by = declared_by_map.get(r.package, [])
     return post
+
+
+# ---------------------------------------------------------------------------
+# Manifest-managed checkouts (custom_nodes.manifest.toml -> git refs)
+# ---------------------------------------------------------------------------
+
+
+class SyncError(Exception):
+    """A manifest ref could not be resolved to a commit."""
+
+
+@dataclass(frozen=True)
+class NodePin:
+    """One [nodes.<name>] manifest entry: clone URL plus pinned ref."""
+
+    url: str
+    ref: str
+
+
+MANIFEST_PATH = Path(__file__).resolve().parent.parent / "custom_nodes.manifest.toml"
+
+_HASH_RE = re.compile(r"^[0-9a-f]{7,40}$")
+_HEAD_OFFSET_RE = re.compile(r"^HEAD~(\d+)$")
+# git refnames forbid these (approximate check, enough to reject typos like
+# "HEAD~x" or "a:b" at parse time instead of at resolution time)
+_BAD_REF_RE = re.compile(r"[~^:\s\[\]*?\\]|@{")
+
+
+def classify_ref(ref: str) -> tuple[str, str]:
+    """Classify a manifest ref as ("latest"|"hash"|"head_offset"|"branch", value).
+
+    Semantics (full rationale in custom_nodes.manifest.toml):
+      latest      HEAD of origin's default branch at fetch time
+      hash        exact commit, 7-40 hex chars (resolved against the fetched
+                  object store at sync time)
+      head_offset HEAD~N relative to the remote default branch's HEAD at
+                  fetch time, never local state
+      branch      tag or branch name; tags win name collisions; a branch
+                  tracks origin/<branch> at fetch time
+    """
+    if ref == "latest":
+        return ("latest", "")
+    if ref == "HEAD":
+        # bare HEAD would silently mean origin's default-branch tip; git
+        # forbids a branch named HEAD anyway, so it is never a valid pin
+        raise ValueError('bare "HEAD" is ambiguous; pin "latest" or a branch/tag name')
+    m = _HEAD_OFFSET_RE.match(ref)
+    if m:
+        return ("head_offset", m.group(1))
+    if _HASH_RE.match(ref):
+        return ("hash", ref)
+    if not ref or ref.startswith("-") or _BAD_REF_RE.search(ref):
+        raise ValueError(f"invalid ref: {ref!r}")
+    return ("branch", ref)
+
+
+def parse_manifest(text: str) -> dict[str, NodePin]:
+    """Parse custom_nodes.manifest.toml content into name -> NodePin.
+
+    Strict on purpose: unknown keys (typo insurance), non-plain directory
+    names, and refs that do not classify cleanly are all errors.
+    """
+    nodes = tomllib.loads(text).get("nodes")
+    if not isinstance(nodes, dict) or not nodes:
+        raise ValueError("manifest must define a non-empty [nodes] table")
+    pins: dict[str, NodePin] = {}
+    for name, table in nodes.items():
+        if not isinstance(table, dict):
+            raise ValueError(f"[nodes.{name}]: expected a table with url and ref")
+        unknown = set(table) - {"url", "ref"}
+        if unknown:
+            raise ValueError(f"[nodes.{name}]: unknown key(s): {', '.join(sorted(unknown))}")
+        url = table.get("url")
+        ref = table.get("ref")
+        if not isinstance(url, str) or not url:
+            raise ValueError(f"[nodes.{name}]: url must be a non-empty string")
+        if url.startswith("-"):
+            # option-injection into `git clone <url>` argv
+            raise ValueError(f"[nodes.{name}]: url must not start with '-'")
+        if not isinstance(ref, str) or not ref:
+            raise ValueError(f"[nodes.{name}]: ref must be a non-empty string")
+        if name in (".", "..") or "/" in name or "\\" in name or not name.strip() or name != name.strip():
+            raise ValueError(f"[nodes.{name}]: not a plain custom_nodes/ directory name")
+        try:
+            classify_ref(ref)
+        except ValueError as e:
+            raise ValueError(f"[nodes.{name}]: {e}") from None
+        pins[name] = NodePin(url=url, ref=ref)
+    return pins
+
+
+def parse_symref_head(ls_remote_output: str) -> str | None:
+    """`git ls-remote --symref origin HEAD` output -> default branch name.
+
+    The first line looks like "ref: refs/heads/master<TAB>HEAD"; anything
+    else (network failure, empty output) yields None.
+    """
+    for line in ls_remote_output.splitlines():
+        if line.startswith("ref: "):
+            ref = line[5:].split("\t")[0].strip()
+            if ref.startswith("refs/heads/"):
+                return ref[len("refs/heads/"):]
+    return None
+
+
+@dataclass(frozen=True)
+class RepoState:
+    """Snapshot of one custom_nodes/<name> checkout for plan_sync."""
+
+    exists: bool
+    is_git: bool = False
+    dirty: bool = False  # uncommitted changes to TRACKED files
+    head: str | None = None  # full hash of HEAD; None = unborn
+    branch: str | None = None  # checked-out branch; None = detached
+    can_ff: bool = False  # branch pin: HEAD is an ancestor of the target
+
+
+@dataclass(frozen=True)
+class Plan:
+    """Next mutation for one node: clone|ok|ff|checkout_branch|detach|refuse."""
+
+    verb: str
+    detail: str = ""
+
+
+def plan_sync(state: RepoState, target: str, branch: str | None) -> Plan:
+    """Decide the next mutation for one node, or 'ok'/'refuse'.
+
+    An existing clone already at the target hash is left alone whatever kind
+    of pin it is (idempotence). A dirty tracked-file worktree is never moved.
+    Branch pins end on the named local branch fast-forwarded to
+    origin/<branch>, or refuse when diverged; every other pin ends detached
+    at the resolved hash.
+    """
+    if not state.exists:
+        return Plan("clone")
+    if not state.is_git:
+        return Plan(
+            "refuse",
+            "exists but is not a git clone (Manager-installed copy?); move it aside "
+            "by hand and re-run — the manifest clone replaces it",
+        )
+    if state.head == target:
+        return Plan("ok")
+    if state.dirty:
+        return Plan(
+            "refuse",
+            "dirty worktree (uncommitted changes to tracked files); commit or "
+            "stash before this ref move",
+        )
+    if branch is None:
+        return Plan("detach")
+    if state.branch == branch:
+        if state.head is None:
+            return Plan("refuse", f"unborn HEAD on {branch}")
+        if state.can_ff:
+            return Plan("ff")
+        return Plan(
+            "refuse",
+            f"{branch} diverged from origin/{branch} (local commits?); refusing "
+            "to discard them",
+        )
+    return Plan("checkout_branch")
+
+
+def _git_out(repo: Path, *args: str) -> str:
+    """git stdout inside a repo, or '' on failure (update_local.git_output style)."""
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True
+    )
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def _git_rc(repo: Path, *args: str) -> bool:
+    """True when git exits 0 inside a repo. Existence probes run --quiet, so
+    the exit code — not stdout — carries the answer."""
+    return (
+        subprocess.run(["git", "-C", str(repo), *args], capture_output=True).returncode
+        == 0
+    )
+
+
+def _git_run(repo: Path | None, *args: str) -> int:
+    """Run git with stdio inherited (clone/fetch/checkout progress is output)."""
+    cmd = ["git"] if repo is None else ["git", "-C", str(repo)]
+    try:
+        return subprocess.run([*cmd, *args]).returncode
+    except FileNotFoundError:
+        print("ERROR: 'git' not found in PATH", file=sys.stderr)
+        return 127
+
+
+def is_dirty(porcelain: str) -> bool:
+    """True when `git status --porcelain` shows tracked-file changes.
+
+    Untracked entries ("?? ...") are not user changes a checkout would
+    discard — git itself only refuses a checkout on a path collision.
+    """
+    return any(not line.startswith("?? ") for line in porcelain.splitlines())
+
+
+def repo_state(
+    repo: Path, target: str | None = None, branch: str | None = None
+) -> RepoState:
+    """Snapshot one checkout's state for plan_sync.
+
+    can_ff (the merge-base check) is computed only when a branch pin sits on
+    its own branch behind the target — the only shape where the answer
+    changes the plan.
+    """
+    if not (repo / ".git").exists():
+        return RepoState(exists=repo.is_dir(), is_git=False)
+    head = _git_out(repo, "rev-parse", "HEAD").strip() or None
+    checked_out = _git_out(repo, "branch", "--show-current").strip() or None
+    porcelain = _git_out(repo, "status", "--porcelain")
+    dirty = is_dirty(porcelain)
+    can_ff = False
+    if target and branch and checked_out == branch and head and head != target:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", head, target],
+            capture_output=True,
+        )
+        can_ff = proc.returncode == 0
+    return RepoState(
+        exists=True, is_git=True, dirty=dirty, head=head, branch=checked_out, can_ff=can_ff
+    )
+
+
+def remote_default_branch(repo: Path) -> str | None:
+    """Origin's default branch name.
+
+    `ls-remote --symref` is authoritative at fetch time; the clone-time
+    origin/HEAD symref is the offline fallback.
+    """
+    branch = parse_symref_head(_git_out(repo, "ls-remote", "--symref", "origin", "HEAD"))
+    if branch:
+        return branch
+    short = _git_out(repo, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    return short.strip().removeprefix("origin/") or None
+
+
+def resolve_pin(repo: Path, ref: str) -> tuple[str, str | None]:
+    """(full commit hash, pinned branch or None) for a manifest ref, post-fetch.
+
+    Deterministic given the fetched refs: latest/HEAD~N resolve against the
+    remote default branch's origin ref (never local HEAD); a named ref that
+    resolves as a tag detaches at the tagged commit (tags win name
+    collisions), one that resolves as origin/<name> is a branch pin; a hash
+    must exist in the object store.
+    """
+    kind, value = classify_ref(ref)
+    if kind in ("latest", "head_offset"):
+        default = remote_default_branch(repo)
+        if not default:
+            raise SyncError(f"cannot determine origin's default branch (needed for {ref!r})")
+        suffix = f"~{value}" if kind == "head_offset" else ""
+        candidates = [f"refs/remotes/origin/{default}{suffix}^{{commit}}"]
+        branch = None
+    elif kind == "hash":
+        candidates = [f"{value}^{{commit}}"]
+        branch = None
+    else:
+        tag = _git_out(
+            repo, "rev-parse", "--verify", "--quiet", f"refs/tags/{value}^{{commit}}"
+        ).strip()
+        if tag:
+            return tag, None
+        candidates = [f"refs/remotes/origin/{value}^{{commit}}"]
+        branch = value
+    for candidate in candidates:
+        out = _git_out(repo, "rev-parse", "--verify", "--quiet", candidate).strip()
+        if out:
+            return out, branch
+    raise SyncError(
+        f"ref {ref!r} did not resolve (tried: {', '.join(candidates)}); "
+        "are the tags/branches fetched?"
+    )
+
+
+REFS_STATE_FILE = (
+    Path(__file__).resolve().parent.parent / ".local-state" / "custom-nodes-refs.json"
+)
+
+
+def save_refs_state(pins: dict[str, NodePin], resolved: dict[str, str]) -> None:
+    """Record the resolved hash per settled node (best-effort, cache only).
+
+    Each clone's HEAD is the primary record; this map is the at-a-glance
+    copy of the last fully settled sync, alongside custom-nodes-deps.json.
+    """
+    state = {
+        "schema": 1,
+        "refs": {
+            name: {"url": pins[name].url, "ref": pins[name].ref, "hash": resolved[name]}
+            for name in sorted(resolved)
+        },
+    }
+    try:
+        REFS_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        REFS_STATE_FILE.write_text(
+            json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        print(f"note: could not write {REFS_STATE_FILE.name}: {exc}", file=sys.stderr)
+
+
+def sync_node(
+    name: str,
+    pin: NodePin,
+    *,
+    dry_run: bool = False,
+    refusals: set[str] | None = None,
+) -> str | None:
+    """Converge one manifest node; returns its resolved hash or None.
+
+    A missing repo is cloned (all branches + tags), an existing one fetched
+    first so every pin resolves at fetch time; the resolved full hash is
+    echoed either way. Refusals print loudly and never mutate anything.
+    """
+    repo = CUSTOM_NODES_DIR / name
+
+    if repo.is_dir() and not (repo / ".git").exists():
+        # refuse BEFORE any git op: git in a bare directory walks up into
+        # whatever repo contains it (this one) and fetches from its origin
+        print(
+            f"{name}: REFUSED: exists but is not a git clone (Manager-installed "
+            "copy?); move it aside by hand and re-run — the manifest clone "
+            "replaces it",
+            file=sys.stderr,
+        )
+        if refusals is not None:
+            refusals.add(name)
+        return None
+
+    did: list[str] = []
+    if not repo.is_dir():
+        if dry_run:
+            print(f"{name}: would clone {pin.url} at ref {pin.ref}")
+            return None
+        print(f"{name}: cloning {pin.url}")
+        if _git_run(None, "clone", pin.url, str(repo)) != 0:
+            print(f"{name}: FAILED: git clone {pin.url}", file=sys.stderr)
+            return None
+        did.append("cloned")
+    elif not dry_run:
+        if _git_run(repo, "fetch", "--prune", "--tags", "origin") != 0:
+            print(f"{name}: FAILED: git fetch origin", file=sys.stderr)
+            return None
+
+    try:
+        target, branch = resolve_pin(repo, pin.ref)
+    except SyncError as e:
+        print(f"{name}: FAILED: {e}", file=sys.stderr)
+        if refusals is not None:
+            refusals.add(name)
+        return None
+
+    for _ in range(3):  # checkout_branch may cascade into one ff; never more
+        state = repo_state(repo, target=target, branch=branch)
+        plan = plan_sync(state, target, branch)
+        if plan.verb == "ok":
+            if did:
+                print(f"{name}: {' + '.join(did)} -> {target} (ref {pin.ref})")
+            else:
+                print(f"{name}: ok {target} (ref {pin.ref})")
+            return target
+        if plan.verb == "refuse":
+            print(f"{name}: REFUSED: {plan.detail} (ref {pin.ref})", file=sys.stderr)
+            if refusals is not None:
+                refusals.add(name)
+            return None
+        if dry_run:
+            print(f"{name}: would {plan.verb} -> {target} (ref {pin.ref})")
+            return None
+        if plan.verb == "detach":
+            if _git_run(repo, "checkout", "--detach", target) != 0:
+                print(f"{name}: FAILED: git checkout --detach {target[:12]}", file=sys.stderr)
+                return None
+            did.append("detached")
+        elif plan.verb == "checkout_branch":
+            if _git_rc(repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"):
+                if not _git_rc(
+                    repo, "merge-base", "--is-ancestor", f"refs/heads/{branch}", target
+                ):
+                    print(
+                        f"{name}: REFUSED: local {branch} diverged from the pinned ref "
+                        "(local commits?); refusing to discard them",
+                        file=sys.stderr,
+                    )
+                    if refusals is not None:
+                        refusals.add(name)
+                    return None
+                args = ("checkout", branch)
+            else:
+                args = ("checkout", "-b", branch, f"origin/{branch}")
+            if _git_run(repo, *args) != 0:
+                print(f"{name}: FAILED: git {' '.join(args)}", file=sys.stderr)
+                return None
+            did.append(f"checked out {branch}")
+        elif plan.verb == "ff":
+            old = state.head
+            if _git_run(repo, "merge", "--ff-only", f"origin/{branch}") != 0:
+                print(f"{name}: FAILED: fast-forward {branch}", file=sys.stderr)
+                return None
+            did.append(f"fast-forwarded {branch} {old[:12]}..")
+        else:  # clone is handled before the loop; anything else is a bug
+            print(f"{name}: FAILED: unexpected plan verb {plan.verb}", file=sys.stderr)
+            return None
+    print(f"{name}: FAILED: could not converge onto the pinned ref", file=sys.stderr)
+    return None
+
+
+def run_sync_manifest(manifest: Path, dry_run: bool = False) -> int:
+    """Converge custom_nodes/ to the manifest: clone missing repos, move every
+    checkout onto its pinned ref, echo + record the resolved full hash per
+    node. Exits 1 if any node refused or failed (a dry run exits 1 only on
+    refusals; planned clone/moves are a plan summary, not failures)."""
+    try:
+        text = manifest.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        print(f"ERROR: manifest not found: {manifest}", file=sys.stderr)
+        return 1
+    try:
+        pins = parse_manifest(text)
+    except (tomllib.TOMLDecodeError, ValueError) as e:
+        print(f"ERROR: {manifest}: {e}", file=sys.stderr)
+        return 1
+
+    resolved: dict[str, str] = {}
+    refusals: set[str] = set()
+    for name in sorted(pins):
+        hash_ = sync_node(name, pins[name], dry_run=dry_run, refusals=refusals)
+        if hash_:
+            resolved[name] = hash_
+    failed = sorted(refusals)
+
+    if dry_run:
+        would = sorted(set(pins) - set(resolved) - refusals)
+        print(
+            f"dry run: {len(resolved)} at pin, {len(would)} would "
+            f"clone/move ({', '.join(would) or 'none'}), "
+            f"{len(failed)} refused — nothing written."
+        )
+    else:
+        if failed:
+            print(
+                f"{len(failed)} node(s) refused/failed: {', '.join(failed)}",
+                file=sys.stderr,
+            )
+        else:
+            # only a fully settled sync may overwrite the last-settled record
+            if resolved:
+                save_refs_state(pins, resolved)
+            print(f"all {len(pins)} manifest node(s) settled at their pinned refs.")
+    return 1 if failed else 0
 
 
 # ---------------------------------------------------------------------------
@@ -396,16 +905,8 @@ def print_json(results: list[AuditResult]) -> None:
 
 
 def main() -> int:
-    if not HAS_PACKAGING:
-        print(
-            "ERROR: 'packaging' library is required but not installed.\n"
-            "Install it with: uv pip install packaging",
-            file=sys.stderr,
-        )
-        return 1
-
     parser = argparse.ArgumentParser(
-        description="Audit and install custom_nodes dependencies",
+        description="Audit and install custom_nodes dependencies; sync their git checkouts",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -420,7 +921,35 @@ def main() -> int:
     )
     install_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
+    # sync (needs no 'packaging': git-side work only, no venv audit)
+    sync_parser = sub.add_parser(
+        "sync",
+        help="Clone/checkout custom_nodes repos pinned in custom_nodes.manifest.toml",
+    )
+    sync_parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=MANIFEST_PATH,
+        help="Manifest path (default: %(default)s)",
+    )
+    sync_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Plan only: resolve pins against last-fetched refs, mutate nothing",
+    )
+
     args = parser.parse_args()
+
+    if args.command == "sync":
+        return run_sync_manifest(args.manifest, args.dry_run)
+
+    if not HAS_PACKAGING:
+        print(
+            "ERROR: 'packaging' library is required but not installed.\n"
+            "Install it with: uv pip install packaging",
+            file=sys.stderr,
+        )
+        return 1
 
     # Discover + deduplicate
     entries = discover_all_deps()
@@ -492,6 +1021,8 @@ def main() -> int:
 
     # Exit 1 if still missing or conflict
     has_issues = any(r.status in ("missing", "conflict") for r in post_results)
+    if not has_issues:
+        save_dep_state(post_results)
     return 1 if has_issues else 0
 
 
