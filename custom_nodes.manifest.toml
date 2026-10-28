@@ -1,0 +1,121 @@
+# Declarative pins for the custom_nodes/* git checkouts, consumed by
+#   python scripts/custom_nodes_deps.py sync
+# The fork's tooling owns cloning and ref pinning for these nodes; this
+# replaces ComfyUI-Manager's install/update behavior, which stays out of the
+# loop for manifest-managed nodes. Once every node under custom_nodes/ is
+# listed here as a git clone, the "manager" extra in pyproject.toml can be
+# dropped (deliberately left in place for now).
+#
+# Format: one [nodes.<directory-name>] table per node.
+#   url  clone URL; the tool clones it as custom_nodes/<name> with remote
+#        "origin" (fetch/pull always go through origin)
+#   ref  what to check out, one of:
+#     latest     HEAD of origin's default branch at fetch time.
+#                Chosen over "newest tag" deliberately: most of these node
+#                repos rarely cut tags, so a tag-based latest would pin most
+#                nodes to stale or nonexistent tags. Resolution is still
+#                deterministic per fetch and recorded — sync echoes the full
+#                resolved hash for every node, and each clone's HEAD is that
+#                record. Pin a tag/hash when a node needs stability.
+#     master     a branch name: tracks origin/<branch> at fetch time; the
+#                local branch is fast-forwarded to it (diverged local commits
+#                are refused, never discarded)
+#     v1.2.3     a tag: detached checkout at the tagged commit (tags win over
+#                same-named branches)
+#     1a2b3c4d   a commit hash, 7-40 hex chars: detached checkout
+#     HEAD~5     N commits behind the remote default branch's HEAD at fetch
+#                time (resolved against origin's refs, never local state):
+#                detached checkout
+#
+# Behavior: an existing clone already at the pinned ref is left untouched;
+# a wrong ref is fetched and checked out; a dirty worktree (uncommitted
+# changes to tracked files) is refused loudly, never discarded; a directory
+# that exists but is not a git clone is refused with a takeover hint.
+#
+# Ref changes affect what the [tool.uv.workspace] members (custom_nodes/*,
+# minus comfyui-impact-pack) resolve into uv.lock; update_local.py step 5
+# runs sync followed by the dependency install for exactly this reason.
+
+[nodes.ComfyUI-ClipProj]
+url = "https://github.com/nicolab28/ComfyUI-ClipProj"
+ref = "main"
+
+[nodes.ComfyUI-DaSiWa-Nodes]
+url = "https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes.git"
+ref = "main"
+
+[nodes.ComfyUI-DeGrid]
+url = "https://github.com/lunaaispace-eng/ComfyUI-DeGrid.git"
+ref = "main"
+
+[nodes.ComfyUI-GGUF]
+url = "https://github.com/city96/ComfyUI-GGUF"
+ref = "latest"
+
+[nodes.ComfyUI-GGUF-Loader]
+url = "https://github.com/ChrisColeTech/ComfyUI-GGUF-Loader.git"
+ref = "main"
+
+[nodes.ComfyUI-H3-Multishot]
+url = "https://github.com/jlucasmcrell/ComfyUI-H3-Multishot"
+ref = "master"
+
+[nodes.ComfyUI-Krea-Moodboards]
+url = "https://github.com/Andro-Meta/ComfyUI-Krea-Moodboards"
+ref = "main"
+
+[nodes.ComfyUI-KreaPhoton]
+url = "https://github.com/Kostik2702/ComfyUI-KreaPhoton.git"
+ref = "master"
+
+[nodes.ComfyUI-MiniMaxH3_LatentUpscaler]
+url = "https://github.com/Tr1dae/ComfyUI-MiniMaxH3_LatentUpscaler"
+ref = "main"
+
+[nodes.ComfyUI-QwenVL]
+url = "https://github.com/1038lab/ComfyUI-QwenVL"
+ref = "main"
+
+[nodes.RES4LYF]
+url = "https://github.com/ClownsharkBatwing/RES4LYF.git"
+ref = "main"
+
+[nodes.comfyui-easy-use]
+url = "https://github.com/yolain/ComfyUI-Easy-Use"
+ref = "main"
+
+[nodes.comfyui-impact-pack]
+url = "https://github.com/ltdrdata/ComfyUI-Impact-Pack"
+ref = "latest"
+
+[nodes.comfyui-kjnodes]
+url = "https://github.com/kijai/ComfyUI-KJNodes"
+ref = "latest"
+
+[nodes.comfyui-krea2edit]
+url = "https://github.com/lbouaraba/comfyui-krea2edit.git"
+ref = "main"
+
+[nodes.comfyui-spectrum-ksampler]
+url = "https://github.com/sorryhyun/ComfyUI-Spectrum-KSampler"
+ref = "latest"
+
+[nodes.comfyui-spectrum-minimax-h3]
+url = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3"
+ref = "latest"
+
+[nodes.comfyui-videohelpersuite]
+url = "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
+ref = "main"
+
+[nodes.comfyui_llama_swap]
+url = "https://github.com/ai-joe-git/comfyui_llama_swap.git"
+ref = "main"
+
+[nodes.rgthree-comfy]
+url = "https://github.com/rgthree/rgthree-comfy"
+ref = "latest"
+
+[nodes.was-node-suite-comfyui]
+url = "https://github.com/WASasquatch/was-node-suite-comfyui.git"
+ref = "main"
