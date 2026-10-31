@@ -96,10 +96,6 @@ ref = "latest"
 url = "https://github.com/lbouaraba/comfyui-krea2edit.git"
 ref = "main"
 
-[nodes.comfyui-spectrum-ksampler]
-url = "https://github.com/sorryhyun/ComfyUI-Spectrum-KSampler"
-ref = "latest"
-
 [nodes.comfyui-spectrum-minimax-h3]
 url = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3"
 ref = "latest"
