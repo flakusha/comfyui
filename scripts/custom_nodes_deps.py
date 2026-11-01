@@ -3,7 +3,9 @@
 
 Discovers pyproject.toml and requirements.txt under custom_nodes/, parses
 PEP 508 dependency specifiers, checks them against the active venv, and
-installs only genuinely missing packages via ``uv pip install``.
+installs only genuinely missing packages via ``uv pip install``. A manifest
+entry may declare ``extras``; each name expands from that node's
+``[project.optional-dependencies]`` and joins the same audit/install path.
 
 Safety invariants:
   - NEVER calls ``uv sync`` (would prune custom-node packages)
@@ -59,7 +61,8 @@ class DepEntry:
     source: str  # "pyproject.toml" or "requirements.txt"
     node: str  # custom_nodes subdirectory name
     raw: str  # original line from the file
-    declared_by: list[str] = field(default_factory=list)  # nodes declaring this package
+    declared_by: list[str] = field(default_factory=list)  # declaring node or node[extra]
+    extra: str = ""  # [project.optional-dependencies] group; "" = base deps
 
 
 @dataclass
@@ -70,7 +73,7 @@ class AuditResult:
     specifier: str
     installed_version: str | None
     status: str  # "ok" | "missing" | "conflict"
-    declared_by: list[str] = field(default_factory=list)  # node names
+    declared_by: list[str] = field(default_factory=list)  # declaring node or node[extra]
 
 
 # ---------------------------------------------------------------------------
@@ -113,46 +116,82 @@ def marker_applies(req) -> bool:
         return True
 
 
-def parse_pyproject(path: Path) -> list[DepEntry]:
-    """Parse [project].dependencies from a pyproject.toml."""
+def req_to_entry(raw: str, node: str, source: str, extra: str = "") -> DepEntry | None:
+    """DepEntry for one PEP 508 line, or None when it must be skipped:
+    malformed, platform marker not matching this machine, or URL-based
+    (e.g. sam2@git+https://...).
+    """
+    try:
+        req = Requirement(raw)
+    except Exception:
+        return None
+    # Skip requirements gated on a platform/env we are not on
+    if not marker_applies(req):
+        return None
+    # Skip URL-based requirements (e.g. sam2@git+https://...)
+    if "@" in raw and ("://" in raw or "git+" in raw):
+        return None
+    return DepEntry(
+        package=canonicalize_name(req.name),
+        specifier=str(req.specifier),
+        source=source,
+        node=node,
+        raw=raw,
+        extra=extra,
+    )
+
+
+def parse_pyproject(
+    path: Path, extras: tuple[str, ...] = ()
+) -> tuple[list[DepEntry], list[str]]:
+    """Parse [project].dependencies plus any manifest-requested extras from
+    [project.optional-dependencies].
+
+    Returns (entries, problems). Problems name manifest extras the pyproject
+    does not define; their packages cannot be expanded, so the caller treats
+    any problem as fatal. Extra names match PEP 503-normalized (doc_export
+    in the manifest honors a doc-export key upstream).
+    """
     node = path.parent.name
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (tomllib.TOMLDecodeError, OSError):
-        return []
+        return [], []
     project = data.get("project")
     if not isinstance(project, dict):
-        return []
-    deps = project.get("dependencies", [])
-    if not isinstance(deps, list):
-        return []
+        return [], []
+    optional = project.get("optional-dependencies")
+    optional = optional if isinstance(optional, dict) else {}
+    defined = {
+        canonicalize_name(name): name
+        for name, reqs in optional.items()
+        if isinstance(reqs, list)
+    }
+    problems = [
+        f"{node}: manifest extra '{extra}' is not defined in "
+        "[project.optional-dependencies]"
+        for extra in extras
+        if canonicalize_name(extra) not in defined
+    ]
+
+    base = project.get("dependencies", [])
+    groups: list[tuple[str, list]] = [("", base)] if isinstance(base, list) else []
+    for extra in extras:
+        name = defined.get(canonicalize_name(extra))
+        if name is not None:
+            groups.append((extra, optional[name]))
+
     entries: list[DepEntry] = []
-    for raw in deps:
-        if not isinstance(raw, str):
-            continue
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            req = Requirement(raw)
-        except Exception:
-            continue
-        # Skip requirements gated on a platform/env we are not on
-        if not marker_applies(req):
-            continue
-        # Skip URL-based requirements (e.g. sam2@git+https://...)
-        if "@" in raw and ("://" in raw or "git+" in raw):
-            continue
-        entries.append(
-            DepEntry(
-                package=canonicalize_name(req.name),
-                specifier=str(req.specifier),
-                source="pyproject.toml",
-                node=node,
-                raw=raw,
-            )
-        )
-    return entries
+    for extra, reqs in groups:
+        for raw in reqs:
+            if not isinstance(raw, str):
+                continue
+            raw = raw.strip()
+            if raw:
+                entry = req_to_entry(raw, node, "pyproject.toml", extra)
+                if entry:
+                    entries.append(entry)
+    return entries, problems
 
 
 def parse_requirements_txt(path: Path) -> list[DepEntry]:
@@ -175,37 +214,44 @@ def parse_requirements_txt(path: Path) -> list[DepEntry]:
             line = line.split(" #", 1)[0].strip()
         if not line:
             continue
-        try:
-            req = Requirement(line)
-        except Exception:
-            continue
-        # Skip requirements gated on a platform/env we are not on
-        if not marker_applies(req):
-            continue
-        # Skip URL-based requirements (e.g. sam2@git+https://...)
-        if "@" in line and ("://" in line or "git+" in line):
-            continue
-        entries.append(
-            DepEntry(
-                package=canonicalize_name(req.name),
-                specifier=str(req.specifier),
-                source="requirements.txt",
-                node=node,
-                raw=line,
-            )
-        )
+        entry = req_to_entry(line, node, "requirements.txt")
+        if entry:
+            entries.append(entry)
     return entries
 
 
-def discover_all_deps() -> list[DepEntry]:
-    """Walk custom_nodes/ and collect all dependency declarations."""
+def discover_all_deps() -> tuple[list[DepEntry], list[str]]:
+    """Walk custom_nodes/ and collect all dependency declarations.
+
+    Manifest [nodes.*].extras expand from each node's pyproject
+    [project.optional-dependencies]; extras declared for a node that only
+    ships requirements.txt are a problem — there is no metadata to expand.
+    """
+    pins: dict[str, NodePin] = {}
+    if MANIFEST_PATH.is_file():
+        try:
+            pins = parse_manifest(MANIFEST_PATH.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            pins = {}
     all_entries: list[DepEntry] = []
+    problems: list[str] = []
     for path, source_type in discover_dep_files():
+        pin = pins.get(path.parent.name)
         if source_type == "pyproject.toml":
-            all_entries.extend(parse_pyproject(path))
+            entries, node_problems = parse_pyproject(
+                path, pin.extras if pin else ()
+            )
+            all_entries.extend(entries)
+            problems.extend(node_problems)
         else:
+            if pin and pin.extras and not (path.parent / "pyproject.toml").is_file():
+                problems.append(
+                    f"{path.parent.name}: manifest declares extras "
+                    f"({', '.join(pin.extras)}) but the node has no "
+                    "pyproject.toml to expand them from"
+                )
             all_entries.extend(parse_requirements_txt(path))
-    return all_entries
+    return all_entries, problems
 
 
 # ---------------------------------------------------------------------------
@@ -221,13 +267,14 @@ def deduplicate(entries: list[DepEntry]) -> dict[str, DepEntry]:
     merged: dict[str, DepEntry] = {}
     for entry in entries:
         key = entry.package
+        source = f"{entry.node}[{entry.extra}]" if entry.extra else entry.node
         if key not in merged:
-            entry.declared_by = [entry.node]
+            entry.declared_by = [source]
             merged[key] = entry
         else:
             existing = merged[key]
-            if entry.node not in existing.declared_by:
-                existing.declared_by.append(entry.node)
+            if source not in existing.declared_by:
+                existing.declared_by.append(source)
             existing_spec = existing.specifier
             new_spec = entry.specifier
             if not existing_spec and new_spec:
@@ -318,12 +365,21 @@ DEPS_STATE_FILE = (
 
 
 def deps_fingerprint() -> str:
-    """sha256 over every discovered dep file's bytes (path-delimited, discovery order)."""
+    """sha256 over every discovered dep file's bytes (path-delimited, discovery order).
+
+    The manifest joins the digest: [nodes.*].extras change the parsed dep
+    set without touching any dep file under custom_nodes/.
+    """
     digest = hashlib.sha256()
     for path, _source_type in discover_dep_files():
         digest.update(str(path).encode("utf-8"))
         digest.update(b"\0")
         digest.update(path.read_bytes())
+        digest.update(b"\0")
+    if MANIFEST_PATH.is_file():
+        digest.update(str(MANIFEST_PATH).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(MANIFEST_PATH.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()
 
@@ -409,6 +465,7 @@ class NodePin:
 
     url: str
     ref: str
+    extras: tuple[str, ...] = ()  # [project.optional-dependencies] groups to install
 
 
 MANIFEST_PATH = Path(__file__).resolve().parent.parent / "custom_nodes.manifest.toml"
@@ -452,7 +509,8 @@ def parse_manifest(text: str) -> dict[str, NodePin]:
     """Parse custom_nodes.manifest.toml content into name -> NodePin.
 
     Strict on purpose: unknown keys (typo insurance), non-plain directory
-    names, and refs that do not classify cleanly are all errors.
+    names, malformed extras, and refs that do not classify cleanly are all
+    errors.
     """
     nodes = tomllib.loads(text).get("nodes")
     if not isinstance(nodes, dict) or not nodes:
@@ -461,7 +519,7 @@ def parse_manifest(text: str) -> dict[str, NodePin]:
     for name, table in nodes.items():
         if not isinstance(table, dict):
             raise ValueError(f"[nodes.{name}]: expected a table with url and ref")
-        unknown = set(table) - {"url", "ref"}
+        unknown = set(table) - {"url", "ref", "extras"}
         if unknown:
             raise ValueError(f"[nodes.{name}]: unknown key(s): {', '.join(sorted(unknown))}")
         url = table.get("url")
@@ -479,7 +537,23 @@ def parse_manifest(text: str) -> dict[str, NodePin]:
             classify_ref(ref)
         except ValueError as e:
             raise ValueError(f"[nodes.{name}]: {e}") from None
-        pins[name] = NodePin(url=url, ref=ref)
+        extras: tuple[str, ...] = ()
+        extras_raw = table.get("extras", [])
+        if extras_raw:
+            if not isinstance(extras_raw, list) or not all(
+                isinstance(e, str) and e.strip() for e in extras_raw
+            ):
+                raise ValueError(
+                    f"[nodes.{name}]: extras must be a list of non-empty strings"
+                )
+            # canonicalize without 'packaging': sync must run without it
+            norm = [re.sub(r"[-_.]+", "-", e).lower() for e in extras_raw]
+            if len(set(norm)) != len(norm):
+                raise ValueError(
+                    f"[nodes.{name}]: duplicate extra(s): {', '.join(extras_raw)}"
+                )
+            extras = tuple(extras_raw)
+        pins[name] = NodePin(url=url, ref=ref, extras=extras)
     return pins
 
 
@@ -952,7 +1026,20 @@ def main() -> int:
         return 1
 
     # Discover + deduplicate
-    entries = discover_all_deps()
+    try:
+        entries, extra_problems = discover_all_deps()
+    except (tomllib.TOMLDecodeError, ValueError) as e:
+        print(f"ERROR: {MANIFEST_PATH.name}: {e}", file=sys.stderr)
+        return 1
+    if extra_problems:
+        for problem in extra_problems:
+            print(f"ERROR: {problem}", file=sys.stderr)
+        print(
+            "Fix the extras in custom_nodes.manifest.toml; refusing to audit "
+            "a partially-expanded dependency set.",
+            file=sys.stderr,
+        )
+        return 1
     deduped = deduplicate(entries)
 
     if not deduped:
