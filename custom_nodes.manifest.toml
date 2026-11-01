@@ -26,6 +26,14 @@
 #     HEAD~5     N commits behind the remote default branch's HEAD at fetch
 #                time (resolved against origin's refs, never local state):
 #                detached checkout
+#   extras optional list of the node's pyproject.toml
+#        [project.optional-dependencies] group names to install — the
+#        custom-node equivalent of uv's --extra, since `uv sync` cannot
+#        enable a workspace member's extras. Names match PEP 503-normalized
+#        (doc_export honors doc-export); an extra the node's pyproject does
+#        not define is a hard error at audit/install time, never silently
+#        skipped. Extras take effect once the node is cloned — update_local.py
+#        syncs before installing, so a fresh checkout is covered in one run.
 #
 # Behavior: an existing clone already at the pinned ref is left untouched;
 # a wrong ref is fetched and checked out; a dirty worktree (uncommitted
@@ -115,3 +123,5 @@ ref = "latest"
 [nodes.was-node-suite-comfyui]
 url = "https://github.com/WASasquatch/was-node-suite-comfyui.git"
 ref = "main"
+# .docx/.odt/.pdf export on Save (python-docx, odfdo, xhtml2pdf); vector_stores stays opt-in.
+extras = ["document_export", "llm"]

@@ -25,7 +25,8 @@ def test_pyproject_marker_gated_dependency_is_skipped(tmp_path):
         '[project]\nname = "node"\nversion = "0.1"\n'
         'dependencies = ["amd-adlx ; platform_system == \'Windows\'"]\n'
     )
-    entries = deps.parse_pyproject(pyproject)
+    entries, problems = deps.parse_pyproject(pyproject)
+    assert problems == []
     if sys.platform == "win32":
         assert [e.package for e in entries] == ["amd-adlx"]
     else:
@@ -113,6 +114,11 @@ def test_parse_symref_head():
     assert deps.parse_symref_head("") is None
 
 
+def test_parse_manifest_empty_extras_list_means_no_extras():
+    pins = deps.parse_manifest('[nodes.a]\nurl = "u"\nref = "main"\nextras = []\n')
+    assert pins["a"].extras == ()
+
+
 def st(**kw):
     """A settled-on-old-commit RepoState, overridden per test."""
     base = dict(exists=True, is_git=True, dirty=False, head="h1", branch=None, can_ff=False)
@@ -172,3 +178,146 @@ def test_is_dirty_tracks_only_tracked_file_changes():
     assert deps.is_dirty("M  staged.txt\n?? untracked.txt\n") is True
     assert deps.is_dirty(" D deleted.txt\n") is True
     assert deps.is_dirty("R  old.txt -> new.txt\n") is True
+
+
+# --- manifest extras -> pyproject [project.optional-dependencies] -----------
+
+PYPROJECT_WITH_EXTRAS = """\
+[project]
+name = "node"
+version = "0.1"
+dependencies = ["base-pkg>=1.0"]
+
+[project.optional-dependencies]
+doc_export = [
+    "python-docx>=1.0",
+    "winonly ; platform_system == 'Windows'",
+    "gitdep @ git+https://example.com/g.git",
+]
+vector = ["chromadb>=1.5"]
+"""
+
+
+@pytest.mark.skipif(not deps.HAS_PACKAGING, reason="packaging not installed")
+def test_parse_pyproject_expands_requested_extra(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(PYPROJECT_WITH_EXTRAS)
+    entries, problems = deps.parse_pyproject(pyproject, ("doc_export",))
+    assert problems == []
+    by_name = {e.package: e for e in entries}
+    assert by_name["base-pkg"].extra == ""
+    assert by_name["python-docx"].extra == "doc_export"
+    assert by_name["python-docx"].specifier == ">=1.0"
+    # URL requirements are skipped inside extras too
+    assert "gitdep" not in by_name
+    # platform-gated extras requirements follow the same marker rules
+    if sys.platform == "win32":
+        assert "winonly" in by_name
+    else:
+        assert "winonly" not in by_name
+
+
+@pytest.mark.skipif(not deps.HAS_PACKAGING, reason="packaging not installed")
+def test_parse_pyproject_without_extras_stays_base_only(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(PYPROJECT_WITH_EXTRAS)
+    entries, problems = deps.parse_pyproject(pyproject)
+    assert problems == []
+    assert {e.package for e in entries} == {"base-pkg"}
+
+
+@pytest.mark.skipif(not deps.HAS_PACKAGING, reason="packaging not installed")
+def test_parse_pyproject_undefined_extra_is_a_problem(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(PYPROJECT_WITH_EXTRAS)
+    entries, problems = deps.parse_pyproject(pyproject, ("doc_export", "nonexistent"))
+    assert {e.package: e.extra for e in entries}["python-docx"] == "doc_export"
+    assert problems == [
+        f"{pyproject.parent.name}: manifest extra 'nonexistent' is not defined "
+        "in [project.optional-dependencies]"
+    ]
+
+
+@pytest.mark.skipif(not deps.HAS_PACKAGING, reason="packaging not installed")
+def test_parse_pyproject_extra_name_matches_normalized(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(PYPROJECT_WITH_EXTRAS)
+    entries, problems = deps.parse_pyproject(pyproject, ("doc-export",))
+    assert problems == []
+    assert {e.package for e in entries} == {"base-pkg", "python-docx"}
+
+
+@pytest.mark.skipif(not deps.HAS_PACKAGING, reason="packaging not installed")
+def test_parse_pyproject_non_list_extra_table_is_a_problem(tmp_path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[project]\nname = "node"\nversion = "0.1"\n'
+        'dependencies = []\n\n[project.optional-dependencies]\n'
+        'broken = "not-a-list"\n'
+    )
+    entries, problems = deps.parse_pyproject(pyproject, ("broken",))
+    assert entries == []
+    assert problems == [
+        f"{pyproject.parent.name}: manifest extra 'broken' is not defined "
+        "in [project.optional-dependencies]"
+    ]
+
+
+@pytest.mark.skipif(not deps.HAS_PACKAGING, reason="packaging not installed")
+def test_deduplicate_records_extra_provenance():
+    entries = [
+        deps.DepEntry(package="pkg", specifier="", source="pyproject.toml", node="a", raw="pkg"),
+        deps.DepEntry(package="pkg", specifier=">=2", source="pyproject.toml", node="a", raw="pkg>=2", extra="doc"),
+    ]
+    merged = deps.deduplicate(entries)
+    assert merged["pkg"].declared_by == ["a", "a[doc]"]
+
+
+def test_parse_manifest_reads_and_validates_extras():
+    pins = deps.parse_manifest('[nodes.a]\nurl = "u"\nref = "main"\nextras = ["doc_export"]\n')
+    assert pins["a"].extras == ("doc_export",)
+    with pytest.raises(ValueError, match="non-empty strings"):
+        deps.parse_manifest('[nodes.a]\nurl = "u"\nref = "main"\nextras = "doc"\n')
+    with pytest.raises(ValueError, match="non-empty strings"):
+        deps.parse_manifest('[nodes.a]\nurl = "u"\nref = "main"\nextras = ["doc", ""]\n')
+    with pytest.raises(ValueError, match="duplicate extra"):
+        deps.parse_manifest('[nodes.a]\nurl = "u"\nref = "main"\nextras = ["doc_export", "doc-export"]\n')
+
+
+@pytest.mark.skipif(not deps.HAS_PACKAGING, reason="packaging not installed")
+def test_discover_all_deps_wires_manifest_extras(tmp_path, monkeypatch):
+    nodes = tmp_path / "nodes"
+    node_py = nodes / "with-pyproject"
+    node_req = nodes / "req-only"
+    node_py.mkdir(parents=True)
+    node_req.mkdir(parents=True)
+    (node_py / "pyproject.toml").write_text(PYPROJECT_WITH_EXTRAS)
+    (node_req / "requirements.txt").write_text("other-pkg\n")
+    manifest = tmp_path / "manifest.toml"
+    manifest.write_text(
+        '[nodes.with-pyproject]\nurl = "u"\nref = "main"\nextras = ["doc_export", "nope"]\n'
+        '\n[nodes.req-only]\nurl = "u"\nref = "main"\nextras = ["doc_export"]\n'
+    )
+    monkeypatch.setattr(deps, "CUSTOM_NODES_DIR", nodes)
+    monkeypatch.setattr(deps, "MANIFEST_PATH", manifest)
+    entries, problems = deps.discover_all_deps()
+    by = {(e.node, e.package): e.extra for e in entries}
+    assert by[("with-pyproject", "python-docx")] == "doc_export"
+    assert by[("req-only", "other-pkg")] == ""
+    assert any("nope" in p for p in problems)
+    assert any("req-only" in p and "no pyproject.toml" in p for p in problems)
+
+
+def test_deps_fingerprint_covers_manifest_extras(tmp_path, monkeypatch):
+    nodes = tmp_path / "nodes"
+    (nodes / "a").mkdir(parents=True)
+    (nodes / "a" / "requirements.txt").write_text("pkg\n")
+    manifest = tmp_path / "manifest.toml"
+    monkeypatch.setattr(deps, "CUSTOM_NODES_DIR", nodes)
+    monkeypatch.setattr(deps, "MANIFEST_PATH", manifest)
+    bare = deps.deps_fingerprint()  # manifest file absent
+    manifest.write_text('[nodes.a]\nurl = "u"\nref = "main"\n')
+    with_base = deps.deps_fingerprint()
+    manifest.write_text('[nodes.a]\nurl = "u"\nref = "main"\nextras = ["doc"]\n')
+    with_extra = deps.deps_fingerprint()
+    assert bare != with_base != with_extra
