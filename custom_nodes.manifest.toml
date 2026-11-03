@@ -125,3 +125,7 @@ url = "https://github.com/WASasquatch/was-node-suite-comfyui.git"
 ref = "main"
 # .docx/.odt/.pdf export on Save (python-docx, odfdo, xhtml2pdf); vector_stores stays opt-in.
 extras = ["document_export", "llm"]
+
+[nodes.comfyui-minimaxh3-director]
+url = "https://github.com/seesee75-commits/ComfyUI-MiniMaxH3-Director"
+ref = "main"
