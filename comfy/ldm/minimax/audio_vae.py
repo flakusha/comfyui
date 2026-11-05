@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import comfy.ops
+from comfy.ldm.modules.attention import AttentionTensorContainer, ComfyAttention, optimized_attention
 
 ops = comfy.ops.disable_weight_init
 
@@ -232,6 +233,7 @@ class CausalAttention(nn.Module):
         self.num_heads = num_heads
         self.out_dim = out_dim
         self.qkv = ops.Linear(in_dim, in_dim * 3, bias=False)
+        self.comfy_attention = ComfyAttention()
         self.q_bias = nn.Parameter(torch.empty(in_dim))
         self.v_bias = nn.Parameter(torch.empty(in_dim))
         self.register_buffer("zero_k_bias", torch.empty(in_dim))
@@ -245,7 +247,10 @@ class CausalAttention(nn.Module):
         q, k, v = qkv.reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4).unbind(0)
 
         # mean over heads then pool down to the latent width (in_dim >> out_dim)
-        x = comfy.ops.scaled_dot_product_attention(q, k, v, is_causal=True)
+        mask = torch.full((N, N), torch.finfo(q.dtype).min, dtype=q.dtype, device=q.device).triu_(1)
+        q, k, v = AttentionTensorContainer(q), AttentionTensorContainer(k), AttentionTensorContainer(v)
+        x = optimized_attention(q, k, v, self.num_heads, mask=mask, skip_reshape=True,
+                                skip_output_reshape=True, preferred_attention=self.comfy_attention)
         x = F.adaptive_avg_pool1d(torch.mean(x, dim=1), self.out_dim)
         return self.proj(x)
 
