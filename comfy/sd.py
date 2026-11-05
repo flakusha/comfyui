@@ -1149,6 +1149,21 @@ class VAE:
                 def _no_generic_io(*args, **kwargs):
                     raise RuntimeError("TripoSplat gaussian decoder: use the 'TripoSplat Decode' (VAEDecodeTripoSplat)")
                 self.memory_used_encode = self.memory_used_decode = _no_generic_io
+            elif bool(sd) and all(key.partition(".")[0].isdigit() for key in sd): # flat decoder-only tiny VAE, e.g. the taeh3 preview TAE
+                self.first_stage_model = comfy.taesd.taehv.FlatTAE(sd)
+                sd = comfy.utils.state_dict_prefix_replace(sd, {"": "model."})
+                self.latent_channels = self.first_stage_model.latent_channels
+                self.output_channels = self.first_stage_model.output_channels
+                self.latent_dim = 3
+                upscale = self.first_stage_model.spatial_upscale
+                self.upscale_ratio = (1, upscale, upscale)
+                self.downscale_ratio = (1, upscale, upscale)
+                self.process_input = self.process_output = lambda image: image
+                def _no_flat_encode(*args, **kwargs):
+                    raise RuntimeError("This tiny VAE is decode-only and cannot encode")
+                self.memory_used_encode = _no_flat_encode
+                self.memory_used_decode = lambda shape, dtype: (256 * shape[1] * math.prod(shape[2:])) * model_management.dtype_size(dtype)
+                self.working_dtypes = [torch.float16, torch.bfloat16, torch.float32]
             else:
                 logging.warning("WARNING: No VAE weights detected, VAE not initalized.")
                 self.first_stage_model = None
@@ -1701,7 +1716,6 @@ class CLIPType(Enum):
     FLUX3 = 37
     MOSS_IMAGE = 38
     FIBO2 = 39
-
 
 
 def load_clip_model_patcher(ckpt_paths, embedding_directory=None, clip_type=CLIPType.STABLE_DIFFUSION, model_options={}, disable_dynamic=False):
