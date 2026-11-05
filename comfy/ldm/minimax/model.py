@@ -412,18 +412,23 @@ class PackedLayout:
                     row += n
                     cursor += 1.0
                 elif kind == "audio":
-                    rt = blk["ref_audio_t"]
+                    # rows follow the shipped latent - the same tensor _cond_audio_rows
+                    # packs; ref_audio_t only sets the time-axis span
+                    audio = blk.get("audio_latent")
+                    rt = audio.shape[-1] if audio is not None else 0
                     if rt > 0:
                         segments.append(("ref_audio", rt * 2))
                         pos.append(_audio_grid(cursor, rt, *target_audio_w))
                         audio_pos.append(torch.arange(row, row + rt * 2))
                         audio_update.append(torch.zeros(rt * 2, dtype=torch.bool))
                         row += rt * 2
-                    cursor += float(rt)
+                    cursor += float(blk["ref_audio_t"])
                 elif kind in ("video", "video_audio"):
                     # the block's audio rows pack immediately before its video
-                    # rows, both sharing the cursor origin
-                    rt = blk["ref_audio_t"]
+                    # rows, both sharing the cursor origin; rows follow the
+                    # shipped latent, ref_audio_t only sets the span
+                    audio = blk.get("audio_latent")
+                    rt = audio.shape[-1] if audio is not None else 0
                     vt = blk["latent_t"]
                     r_frame, r_w_grid = _frame_grid(blk["latent_h"], blk["latent_w"])
                     if rt > 0:
@@ -438,7 +443,7 @@ class PackedLayout:
                     img_pos.append(torch.arange(row, row + n))
                     img_update.append(torch.zeros(n, dtype=torch.bool))
                     row += n
-                    cursor += max(float(rt), sum(_video_t_spans(vt)))
+                    cursor += max(float(blk["ref_audio_t"]), sum(_video_t_spans(vt)))
 
         # target audio then target video, always the last two segments
         segments.append(("audio", audio_t * 2))
