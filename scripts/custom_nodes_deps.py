@@ -755,7 +755,7 @@ def _patch_new_files(patch: Path) -> list[str]:
     """
     lines = patch.read_text(encoding="utf-8").splitlines()
     return [
-        lines[i][len("+++ b/"):]
+        lines[i + 1][len("+++ b/"):]
         for i in range(len(lines) - 1)
         if lines[i] == "--- /dev/null" and lines[i + 1].startswith("+++ b/")
     ]
