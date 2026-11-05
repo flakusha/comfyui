@@ -150,6 +150,7 @@ patches = [
   "0002-ai-panel-persists-provider-choice.patch",
   "0003-legacy-character-analysis-no-browser-timeout.patch",
   "0004-ai-loader-max-tokens-thinking-budget.patch",
+  "0005-flat-taeh3-preview-decoder.patch",
 ]
 
 [nodes.comfyui-speed-sampler]
