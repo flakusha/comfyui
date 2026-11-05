@@ -746,6 +746,21 @@ def _patch_files(name: str, pin: NodePin) -> list[Path]:
     return files
 
 
+def _patch_new_files(patch: Path) -> list[str]:
+    """Paths a patch creates: diff headers with a /dev/null pre-image.
+
+    `git add -u` stages tracked changes only, so files a stack introduces —
+    absent from HEAD, hence untracked in the worktree — must be staged by
+    name for the unwind below to reverse their creation hunks.
+    """
+    lines = patch.read_text(encoding="utf-8").splitlines()
+    return [
+        lines[i][len("+++ b/"):]
+        for i in range(len(lines) - 1)
+        if lines[i] == "--- /dev/null" and lines[i + 1].startswith("+++ b/")
+    ]
+
+
 def _patches_applied(repo: Path, files: list[Path]) -> bool:
     """True when the worktree diff is exactly the declared patch stack on top
     of HEAD, i.e. the whole stack unwinds back to the pinned ref's tree."""
@@ -759,6 +774,9 @@ def _patches_applied(repo: Path, files: list[Path]) -> bool:
         if not _git_env_rc(repo, env, "read-tree", "HEAD"):
             return False
         if not _git_env_rc(repo, env, "add", "-u"):
+            return False
+        new_files = [p for f in files for p in _patch_new_files(f)]
+        if new_files and not _git_env_rc(repo, env, "add", "--", *new_files):
             return False
         for f in reversed(files):
             if not _git_env_rc(repo, env, "apply", "--cached", "--reverse", str(f)):
