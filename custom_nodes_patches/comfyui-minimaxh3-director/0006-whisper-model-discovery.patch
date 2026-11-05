@@ -1,0 +1,373 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index aa5c156..4e2d604 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,18 @@
+ # Changelog
+ 
++## Unreleased
++
++- **Whisper files on an extra model path are found, and HuggingFace safetensors checkpoints load** (user report,
++  2026-11-05). The Audio card's Models menu read `models/whisper` under ComfyUI's own models dir only, so a whisper
++  folder registered through `extra_model_paths.yaml` stayed empty even though ComfyUI itself knew it. The menu now
++  follows `folder_paths` whenever the folder is registered and resolves the chosen file where it really lies. Loading
++  went through `whisper.load_model`, which torch-loads a pickle: a safetensors checkpoint - what a HuggingFace
++  `openai/whisper-*` download is, and what the report's `small.pt` symlink pointed at - failed. Safetensors files are
++  now recognized by their content, whatever the name says, built with dimensions read off the tensor shapes and
++  HuggingFace key names renamed to openai-whisper ones; anything that does not fit is refused with a sentence naming
++  the file, not a silently wrong model. Verified end to end on CPU with a real whisper-large-v3 safetensors
++  (correct dimensions, a transcription runs).
++
+ ## 1.0.1 (2026-11-03)
+ 
+ - **Example files are copied when you open an example, not on start** (#35). Opening an example workflow copies the
+diff --git a/GUIDE.md b/GUIDE.md
+index cc8512f..69e1d47 100644
+--- a/GUIDE.md
++++ b/GUIDE.md
+@@ -146,7 +146,8 @@ Depth Anything 3 is optional and needs the **ComfyUI-DepthAnythingV3** nodes, wh
+ | Whisper | [small.pt](https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt) | `models/whisper` | 0.5 GB |
+ 
+ Whisper needs the `openai-whisper` package in ComfyUI's Python. Larger models (`medium.pt`, `large-v3.pt`) hear sung words
+-better.
++better. HuggingFace safetensors checkpoints (from `openai/whisper-*`) load as well, whatever the file is called; the
++folder may sit anywhere ComfyUI knows it, for example through `extra_model_paths.yaml`.
+ 
+ ### Example files
+ 
+diff --git a/js/guide/en/02-models.md b/js/guide/en/02-models.md
+index a1f52fc..0c0bddb 100644
+--- a/js/guide/en/02-models.md
++++ b/js/guide/en/02-models.md
+@@ -59,7 +59,8 @@ Depth Anything 3 is optional and needs the **ComfyUI-DepthAnythingV3** nodes, wh
+ | Whisper | [small.pt](https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt) | `models/whisper` | 0.5 GB |
+ 
+ Whisper needs the `openai-whisper` package in ComfyUI's Python. Larger models (`medium.pt`, `large-v3.pt`) hear sung words
+-better.
++better. HuggingFace safetensors checkpoints (from `openai/whisper-*`) load as well, whatever the file is called; the
++folder may sit anywhere ComfyUI knows it, for example through `extra_model_paths.yaml`.
+ 
+ ## Example files
+ 
+diff --git a/js/ng/models.json b/js/ng/models.json
+index 8912329..f2482ec 100644
+--- a/js/ng/models.json
++++ b/js/ng/models.json
+@@ -17,5 +17,5 @@
+   "pose": {"label": "Pose: keypoints", "use": "draws the pose control video", "group": "control", "folder": "checkpoints", "list": ["CheckpointLoaderSimple", "ckpt_name"], "patterns": ["sdpose_wholebody_fp16\\.safetensors$", "sdpose"], "file": "sdpose_wholebody_fp16.safetensors", "size": "1.9 GB", "url": "https://huggingface.co/Comfy-Org/SDPose/resolve/main/checkpoints/sdpose_wholebody_fp16.safetensors"},
+   "moge": {"label": "Depth (MoGe)", "use": "draws the depth control video", "group": "control", "folder": "geometry_estimation", "list": ["LoadMoGeModel", "model_name"], "patterns": ["moge_2_vitl_normal_fp16\\.safetensors$", "moge"], "file": "moge_2_vitl_normal_fp16.safetensors", "size": "0.7 GB", "url": "https://huggingface.co/Comfy-Org/MoGe/resolve/main/geometry_estimation/moge_2_vitl_normal_fp16.safetensors"},
+   "da3": {"label": "Depth (Depth Anything 3)", "use": "draws the depth control video with the ComfyUI-DepthAnythingV3 nodes", "group": "control", "folder": "depthanything3", "list": ["DownloadAndLoadDepthAnythingV3Model", "model"], "patterns": ["^da3_base\\.safetensors$", "^da3.*\\.safetensors$"], "file": "da3_base.safetensors", "size": "0.5 GB", "url": "", "note": "Needs the ComfyUI-DepthAnythingV3 node pack (ComfyUI-Manager); it downloads its models itself."},
+-  "whisper": {"label": "Whisper", "use": "times song lyrics on the Audio card", "group": "sound", "folder": "whisper", "list": null, "patterns": ["^large-v3\\.pt$", "^large\\.pt$", "^medium\\.pt$", "^small\\.pt$", "^base\\.pt$", "^tiny\\.pt$"], "file": "small.pt", "size": "0.5 GB", "url": "https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt", "note": "Needs the openai-whisper package in ComfyUI's Python; larger models hear sung words better."}
++  "whisper": {"label": "Whisper", "use": "times song lyrics on the Audio card", "group": "sound", "folder": "whisper", "list": null, "patterns": ["^large-v3\\.pt$", "^large\\.pt$", "^medium\\.pt$", "^small\\.pt$", "^base\\.pt$", "^tiny\\.pt$"], "file": "small.pt", "size": "0.5 GB", "url": "https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt", "note": "Needs the openai-whisper package in ComfyUI's Python; .pt files and HuggingFace safetensors checkpoints both load; larger models hear sung words better."}
+ }
+diff --git a/ng/adapters/lyrics_timing.py b/ng/adapters/lyrics_timing.py
+index 539cf06..b755038 100644
+--- a/ng/adapters/lyrics_timing.py
++++ b/ng/adapters/lyrics_timing.py
+@@ -1,5 +1,10 @@
+-"""Time a song's lyrics with a local Whisper model (openai-whisper, model files in models/whisper)."""
++"""Time a song's lyrics with a local Whisper model (openai-whisper, model files in models/whisper or wherever
++ComfyUI registers the folder). Official .pt files load through whisper; safetensors checkpoints load here, whatever
++their name is called and under HuggingFace transformers or openai-whisper key names."""
++import json
+ import os
++import re
++import struct
+ 
+ import av
+ import folder_paths
+@@ -14,12 +19,110 @@ try:
+ except ImportError:
+     whisper = None
+ 
++# HuggingFace transformers checkpoints (openai/whisper-*) keep Whisper's weights under other names; the shapes are
++# the same, so renaming is enough. q/k/v become query/key/value, projections become the attention's pieces and the
++# language-model head is dropped - whisper reads its logits off the token embedding itself.
++_ATTN = {"q_proj": "query", "k_proj": "key", "v_proj": "value", "out_proj": "out"}
++_HF_KEYS = (
++    (r"model\.encoder\.conv([12])\.(weight|bias)$", "encoder.conv%s.%s"),
++    (r"model\.encoder\.layers\.(\d+)\.self_attn\.(q_proj|k_proj|v_proj|out_proj)\.(weight|bias)$", "encoder.blocks.%s.attn.%s.%s"),
++    (r"model\.encoder\.layers\.(\d+)\.self_attn_layer_norm\.(weight|bias)$", "encoder.blocks.%s.attn_ln.%s"),
++    (r"model\.encoder\.layers\.(\d+)\.final_layer_norm\.(weight|bias)$", "encoder.blocks.%s.mlp_ln.%s"),
++    (r"model\.encoder\.layers\.(\d+)\.fc1\.(weight|bias)$", "encoder.blocks.%s.mlp.0.%s"),
++    (r"model\.encoder\.layers\.(\d+)\.fc2\.(weight|bias)$", "encoder.blocks.%s.mlp.2.%s"),
++    (r"model\.encoder\.layer_norm\.(weight|bias)$", "encoder.ln_post.%s"),
++    (r"model\.decoder\.embed_tokens\.weight$", "decoder.token_embedding.weight"),
++    (r"model\.decoder\.embed_positions\.weight$", "decoder.positional_embedding"),
++    (r"model\.decoder\.layers\.(\d+)\.self_attn\.(q_proj|k_proj|v_proj|out_proj)\.(weight|bias)$", "decoder.blocks.%s.attn.%s.%s"),
++    (r"model\.decoder\.layers\.(\d+)\.encoder_attn\.(q_proj|k_proj|v_proj|out_proj)\.(weight|bias)$", "decoder.blocks.%s.cross_attn.%s.%s"),
++    (r"model\.decoder\.layers\.(\d+)\.self_attn_layer_norm\.(weight|bias)$", "decoder.blocks.%s.attn_ln.%s"),
++    (r"model\.decoder\.layers\.(\d+)\.encoder_attn_layer_norm\.(weight|bias)$", "decoder.blocks.%s.cross_attn_ln.%s"),
++    (r"model\.decoder\.layers\.(\d+)\.fc1\.(weight|bias)$", "decoder.blocks.%s.mlp.0.%s"),
++    (r"model\.decoder\.layers\.(\d+)\.fc2\.(weight|bias)$", "decoder.blocks.%s.mlp.2.%s"),
++    (r"model\.decoder\.layers\.(\d+)\.final_layer_norm\.(weight|bias)$", "decoder.blocks.%s.mlp_ln.%s"),
++    (r"model\.decoder\.layer_norm\.(weight|bias)$", "decoder.ln.%s"),
++)
++
+ def model_file(chosen=""):
+-    """The Audio card's Models menu choice, else the largest model present: larger ones hear sung words better."""
++    """The Audio card's Models menu choice, else the largest model present: larger ones hear sung words better. The
++    name is resolved wherever ComfyUI has the whisper folder registered (extra_model_paths.yaml), models/ only when
++    nothing is registered."""
+     name = model_files.find("whisper", chosen)
+     if name is None:
+         raise ValueError("No Whisper model: " + model_files.missing("whisper"))
+-    return os.path.join(folder_paths.models_dir, "whisper", name)
++    path = folder_paths.get_full_path("whisper", name) if "whisper" in folder_paths.folder_names_and_paths else None
++    return path or os.path.join(folder_paths.models_dir, "whisper", name)
++
++
++def _is_safetensors(path):
++    """True when the file is safetensors, whatever its name says - a .pt symlink may point at one. Only the header is
++    read: a length and the JSON of tensor names behind it."""
++    try:
++        with open(path, "rb") as file:
++            (size,) = struct.unpack("<Q", file.read(8))
++            if size > max(os.path.getsize(path) - 8, 0):
++                return False
++            header = json.loads(file.read(size))
++        return isinstance(header, dict) and all(
++            isinstance(entry, dict) and "dtype" in entry and "shape" in entry
++            for key, entry in header.items() if key != "__metadata__")
++    except (OSError, ValueError, struct.error):
++        return False
++
++
++def _openai_key(key):
++    """A HuggingFace transformers key renamed to its openai-whisper name, or None (head and helpers are dropped)."""
++    for pattern, template in _HF_KEYS:
++        match = re.fullmatch(pattern, key)
++        if match:
++            return template % tuple(_ATTN.get(part, part) for part in match.groups())
++    return None
++
++
++def _dimensions(state, name):
++    """The model's dimensions read off the tensor shapes. Every released Whisper keeps head = state // 64, a
++    1500-frame audio window and a 448-token text window; the audio sinusoids are rebuilt, not carried
++    (HuggingFace files leave them out, so their length comes from whisper itself there)."""
++    for key in ("encoder.conv1.weight", "decoder.token_embedding.weight", "decoder.positional_embedding"):
++        if key not in state:
++            raise ValueError("%s is not a Whisper checkpoint: no %s." % (name, key))
++
++    def side(prefix):
++        layers = [int(m.group(1)) for key in state for m in [re.match(prefix + r"\.blocks\.(\d+)\.", key)] if m]
++        return 1 + max(layers + [-1])
++
++    conv, pos = state["encoder.conv1.weight"].shape, state["decoder.positional_embedding"].shape
++    sinusoids = state.get("encoder.positional_embedding")
++    return whisper.model.ModelDimensions(
++        n_mels=conv[1], n_audio_ctx=sinusoids.shape[0] if sinusoids is not None else 1500,
++        n_audio_state=conv[0], n_audio_head=conv[0] // 64, n_audio_layer=side("encoder"),
++        n_vocab=state["decoder.token_embedding.weight"].shape[0],
++        n_text_ctx=pos[0], n_text_state=pos[1], n_text_head=pos[1] // 64, n_text_layer=side("decoder"))
++
++
++def _load_safetensors(path, device):
++    """Whisper built from a safetensors file: torch.load reads only its own pickle, so openai-whisper's loader refuses
++    the format. What is built is what load_model returns for the same weights (fp16 weights stay fp16, the alignment
++    heads default as for a loaded .pt file). Anything that does not fit is an error, not a silently wrong model."""
++    from safetensors.torch import load_file
++    name = os.path.basename(path)
++    state = load_file(path)
++    huggingface = any(key.startswith("model.") for key in state)
++    converted = {}
++    for key, tensor in state.items():
++        key = _openai_key(key) if huggingface else key
++        if key is not None:
++            converted[key] = tensor
++    model = whisper.model.Whisper(_dimensions(converted, name))
++    missing, unexpected = model.load_state_dict(converted, strict=False)
++    if unexpected or set(missing) - {"encoder.positional_embedding"}:
++        raise ValueError("%s does not fit Whisper: missing %s, unexpected %s." % (name, sorted(missing), sorted(unexpected)))
++    return model.to(device)
++
++
++def _load_model(path, device):
++    """The chosen model file: safetensors content is built here, the official torch pickles go through whisper."""
++    return _load_safetensors(path, device) if _is_safetensors(path) else whisper.load_model(path, device=device)
+ 
+ 
+ def _samples(path):
+@@ -45,7 +148,7 @@ def time_lyrics(source, text, device, chosen=""):
+     known = lyrics.plain_lines(text)
+     language, _ = lyrics.parse(text)
+     samples = _samples(path)
+-    model = whisper.load_model(model_file(chosen), device=device)
++    model = _load_model(model_file(chosen), device=device)
+     try:
+         result = model.transcribe(samples, word_timestamps=True, fp16=str(device) != "cpu",
+                                   initial_prompt=" ".join(known) or None, condition_on_previous_text=False)
+diff --git a/ng/adapters/model_files.py b/ng/adapters/model_files.py
+index 1c243ec..9a97252 100644
+--- a/ng/adapters/model_files.py
++++ b/ng/adapters/model_files.py
+@@ -14,11 +14,12 @@ with open(PATH, encoding="utf-8") as file:
+ 
+ 
+ def names(purpose):
+-    """The files of the purpose's folder. Whisper's, MoGe's and Depth Anything 3's folders are not always among ComfyUI's
+-    model folders (asking for one that is not raised and the Models menu stayed empty, GUI test 2026-10-19): then the
+-    folder under models/ is read."""
++    """The files of the purpose's folder. When ComfyUI knows the folder - its own under models/, or one registered
++    through extra_model_paths.yaml - its list is used, so files on a registered extra path show up too. Whisper's,
++    MoGe's and Depth Anything 3's folders are not always registered (asking folder_paths for one that is not raised
++    and the Models menu stayed empty, GUI test 2026-10-19): then the folder under models/ is read."""
+     folder = MODELS[purpose]["folder"]
+-    if MODELS[purpose]["list"] is not None and folder in folder_paths.folder_names_and_paths:
++    if folder in folder_paths.folder_names_and_paths:
+         return folder_paths.get_filename_list(folder)
+     root = os.path.join(folder_paths.models_dir, folder)
+     return sorted(name for name in os.listdir(root) if os.path.isfile(os.path.join(root, name))) if os.path.isdir(root) else []
+diff --git a/tests/ng/regressions/bug_090_whisper_models_not_listed.py b/tests/ng/regressions/bug_090_whisper_models_not_listed.py
+new file mode 100644
+index 0000000..7cf3376
+--- /dev/null
++++ b/tests/ng/regressions/bug_090_whisper_models_not_listed.py
+@@ -0,0 +1,132 @@
++"""BUG-090 (user report, 2026-11-05): the Audio card's Whisper menu stays empty although models/whisper
++holds a model, and a Whisper file under a different name cannot load.
++
++Two defects behind it:
++
++1. model_files.names() read models/whisper under ComfyUI's own models dir only. The user's whisper
++   folder is registered through extra_model_paths.yaml (`whisper: whisper/` under a central
++   base_path; models/whisper does not even exist locally), so every file on the extra path stayed
++   invisible. The `list: null` marker in js/ng/models.json means "no ComfyUI loader node lists this
++   folder", which the code read as "the folder is not registered" - wrong, the yaml registers whisper
++   like every other folder. names() now asks folder_paths whenever the folder is registered and keeps
++   the models/ read for folders ComfyUI does not know (GUI test 2026-10-19).
++
++2. lyrics_timing resolved the chosen file under models/whisper and loaded it with whisper.load_model,
++   which torch.loads a pickle. A safetensors checkpoint - the format a user with a HuggingFace
++   openai/whisper-* download has - failed even under the official .pt name (the report's
++   small.pt -> whisper_large_v3_fp16.safetensors symlink). The loader now sniffs the file (a .pt name
++   may hide safetensors), builds the Whisper from its state dict with dimensions read off the shapes,
++   and renames HuggingFace transformers keys to openai-whisper names; anything that does not fit is a
++   named error, not a silently wrong model.
++
++Expected (Soll): files from a registered extra path are listed and resolved, a safetensors Whisper
++loads under either key family whatever the file is called, and a non-Whisper safetensors file is
++refused with a sentence naming the problem. No server, no GPU, no real model file needed.
++"""
++import importlib.util
++import os
++import re
++import sys
++import tempfile
++import unittest
++from unittest import mock
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++from _pack import comfy_available, module
++
++HAVE_COMFY = comfy_available()
++HAVE_WHISPER = importlib.util.find_spec("whisper") is not None
++
++
++@unittest.skipUnless(HAVE_COMFY, "ComfyUI is not importable")
++class WhisperRegisteredFolderAndSafetensors(unittest.TestCase):
++    def setUp(self):
++        self.files = module("ng.adapters.model_files")
++        self.lyrics = module("ng.adapters.lyrics_timing")
++
++    def test_a_registered_folder_is_listed_and_resolved(self):
++        """extra_model_paths.yaml registers whisper: the menu follows ComfyUI's list and the file
++        resolves on the extra path, not under models/ alone."""
++        registered = {"whisper": (["/data/Models/whisper"], set())}
++        with mock.patch.dict("folder_paths.folder_names_and_paths", registered), \
++             mock.patch("folder_paths.get_filename_list", return_value=["small.pt", "whisper_large_v3_fp16.safetensors"]), \
++             mock.patch("folder_paths.get_full_path", return_value="/data/Models/whisper/small.pt") as resolve:
++            self.assertEqual(self.files.names("whisper"), ["small.pt", "whisper_large_v3_fp16.safetensors"])
++            self.assertEqual(self.files.find("whisper"), "small.pt", "the official name still wins the automatic choice")
++            self.assertEqual(self.files.find("whisper", "whisper_large_v3_fp16.safetensors"), "whisper_large_v3_fp16.safetensors")
++            self.assertEqual(self.lyrics.model_file("small.pt"), "/data/Models/whisper/small.pt")
++            resolve.assert_called_once_with("whisper", "small.pt")
++
++    def test_huggingface_keys_are_renamed_exactly(self):
++        cases = {
++            "model.encoder.conv1.weight": "encoder.conv1.weight",
++            "model.encoder.layers.0.self_attn.v_proj.bias": "encoder.blocks.0.attn.value.bias",
++            "model.encoder.layers.2.self_attn_layer_norm.weight": "encoder.blocks.2.attn_ln.weight",
++            "model.encoder.layers.1.final_layer_norm.bias": "encoder.blocks.1.mlp_ln.bias",
++            "model.encoder.layers.1.fc1.bias": "encoder.blocks.1.mlp.0.bias",
++            "model.encoder.layers.1.fc2.bias": "encoder.blocks.1.mlp.2.bias",
++            "model.encoder.layer_norm.weight": "encoder.ln_post.weight",
++            "model.decoder.embed_tokens.weight": "decoder.token_embedding.weight",
++            "model.decoder.embed_positions.weight": "decoder.positional_embedding",
++            "model.decoder.layers.4.self_attn.q_proj.weight": "decoder.blocks.4.attn.query.weight",
++            "model.decoder.layers.4.encoder_attn.k_proj.weight": "decoder.blocks.4.cross_attn.key.weight",
++            "model.decoder.layers.0.self_attn_layer_norm.bias": "decoder.blocks.0.attn_ln.bias",
++            "model.decoder.layers.0.encoder_attn_layer_norm.bias": "decoder.blocks.0.cross_attn_ln.bias",
++            "model.decoder.layers.3.fc1.weight": "decoder.blocks.3.mlp.0.weight",
++            "model.decoder.layers.3.fc2.weight": "decoder.blocks.3.mlp.2.weight",
++            "model.decoder.layers.3.final_layer_norm.bias": "decoder.blocks.3.mlp_ln.bias",
++            "model.decoder.layer_norm.weight": "decoder.ln.weight",
++            "proj_out.weight": None,
++        }
++        for given, want in cases.items():
++            self.assertEqual(self.lyrics._openai_key(given), want, given)
++
++    @unittest.skipUnless(HAVE_WHISPER, "openai-whisper is not installed")
++    def test_a_safetensors_whisper_loads_under_both_key_families(self):
++        import torch
++        from safetensors.torch import save_file
++        import whisper as whisper_pkg
++
++        dims = whisper_pkg.model.ModelDimensions(80, 1500, 64, 1, 1, 96, 8, 64, 1, 1)  # 1500: HuggingFace files leave the audio sinusoids out, so the built model gets whisper's own window
++        state = dict(whisper_pkg.model.Whisper(dims).state_dict())
++        attn = {"query": "q_proj", "key": "k_proj", "value": "v_proj", "out": "out_proj"}
++        mlp = {"0": "fc1", "2": "fc2"}
++
++        def hf(key):
++            key = re.sub(r"^(encoder|decoder)\.blocks\.(\d+)\.attn\.(query|key|value|out)\.",
++                         lambda m: "model.%s.layers.%s.self_attn.%s." % (m[1], m[2], attn[m[3]]), key)
++            key = re.sub(r"^decoder\.blocks\.(\d+)\.cross_attn\.(query|key|value|out)\.",
++                         lambda m: "model.decoder.layers.%s.encoder_attn.%s." % (m[1], attn[m[2]]), key)
++            key = re.sub(r"^(encoder|decoder)\.blocks\.(\d+)\.attn_ln\.", r"model.\1.layers.\2.self_attn_layer_norm.", key)
++            key = re.sub(r"^decoder\.blocks\.(\d+)\.cross_attn_ln\.", r"model.decoder.layers.\1.encoder_attn_layer_norm.", key)
++            key = re.sub(r"^(encoder|decoder)\.blocks\.(\d+)\.mlp\.([02])\.",
++                         lambda m: "model.%s.layers.%s.%s." % (m[1], m[2], mlp[m[3]]), key)
++            key = re.sub(r"^(encoder|decoder)\.blocks\.(\d+)\.mlp_ln\.", r"model.\1.layers.\2.final_layer_norm.", key)
++            key = re.sub(r"^encoder\.conv([12])\.", r"model.encoder.conv\1.", key)
++            key = re.sub(r"^encoder\.ln_post\.", "model.encoder.layer_norm.", key)
++            key = key.replace("decoder.token_embedding.", "model.decoder.embed_tokens.")
++            key = key.replace("decoder.positional_embedding", "model.decoder.embed_positions.weight")
++            key = key.replace("decoder.ln.", "model.decoder.layer_norm.")
++            return key
++
++        with tempfile.TemporaryDirectory() as root:
++            plain = os.path.join(root, "whisper_openai_keys.safetensors")
++            save_file(state, plain)
++            self.assertEqual(self.lyrics._load_safetensors(plain, "cpu").dims, dims)
++
++            renamed = os.path.join(root, "whisper_huggingface_keys.safetensors")
++            save_file({hf(key): tensor for key, tensor in state.items() if key != "encoder.positional_embedding"}, renamed)
++            self.assertEqual(self.lyrics._load_safetensors(renamed, "cpu").dims, dims)
++
++            twin = os.path.join(root, "small.pt")
++            os.symlink(renamed, twin)
++            self.assertEqual(self.lyrics._load_model(twin, "cpu").dims, dims, "the format is sniffed, not read off the name")
++
++            junk = os.path.join(root, "junk.safetensors")
++            save_file({"not_a_whisper": torch.zeros(2)}, junk)
++            with self.assertRaisesRegex(ValueError, "is not a Whisper checkpoint: no encoder\\.conv1\\.weight"):
++                self.lyrics._load_safetensors(junk, "cpu")
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/ng/test_verified_regressions.py b/tests/ng/test_verified_regressions.py
+index 1c52f7e..45c734a 100644
+--- a/tests/ng/test_verified_regressions.py
++++ b/tests/ng/test_verified_regressions.py
+@@ -12,6 +12,9 @@ from regressions.bug_033_auto_direct_provider import AutoDirectCloudProvider
+ from regressions.bug_036_text_card_no_text import TextCardNoTextWarning
+ from regressions.bug_037_picture_cap_silent import PictureCapReported
+ from regressions.bug_038_models_anthropic_headers import ModelsAuthHeadersTest
++# BUG-090 (user report, 2026-11-05): the Whisper menu ignored a whisper folder registered through extra_model_paths.yaml
++# and only torch pickles loaded; fixed with folder_paths discovery and a safetensors loader in ng/adapters/lyrics_timing.py.
++from regressions.bug_090_whisper_models_not_listed import WhisperRegisteredFolderAndSafetensors
+ 
+ NODE = shutil.which("node")
+ VERIFIED_JS = ("timeline_boundaries.test.mjs", "ai_snapshot.test.mjs", "studio_actions.test.mjs", "review_state_pending.test.mjs",
