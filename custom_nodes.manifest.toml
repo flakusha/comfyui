@@ -34,6 +34,22 @@
 #        not define is a hard error at audit/install time, never silently
 #        skipped. Extras take effect once the node is cloned — update_local.py
 #        syncs before installing, so a fresh checkout is covered in one run.
+#   patches optional ordered list of plain patch file names, relative to
+#        custom_nodes_patches/<directory-name>/ at the repo root (one
+#        subdirectory per node, mirroring the [nodes.<name>] key). Carries
+#        LOCAL changes on top of the pinned ref without local commits: each
+#        file is a plain `git format-diff`-style diff applied with `git apply`
+#        after the pinned ref is checked out (apply, not am — patches stay
+#        simple, committable-by-hand diffs that are trivial to regenerate
+#        against a moved ref). Applied in list order; a patch that fails —
+#        missing file, or a hunk upstream changed — is a loud error naming
+#        the node and patch file, never a silent skip. Idempotence model:
+#        on every sync the worktree must match either the clean pinned ref
+#        (then the stack is applied) or the ref with the full stack already
+#        applied (reverse-apply check; no re-apply) — any OTHER dirty state
+#        is refused loudly, never discarded, and a ref move under an applied
+#        stack resets it first and re-applies after convergence. Patchless
+#        nodes keep the plain dirty-worktree refusal unchanged.
 #
 # Behavior: an existing clone already at the pinned ref is left untouched;
 # a wrong ref is fetched and checked out; a dirty worktree (uncommitted
@@ -129,6 +145,7 @@ extras = ["document_export", "llm"]
 [nodes.comfyui-minimaxh3-director]
 url = "https://github.com/seesee75-commits/ComfyUI-MiniMaxH3-Director"
 ref = "main"
+patches = ["0001-ai-request-honors-provider-timeout.patch", "0002-ai-panel-persists-provider-choice.patch", "0003-legacy-character-analysis-no-browser-timeout.patch", "0004-ai-loader-max-tokens-thinking-budget.patch"]
 
 [nodes.comfyui-speed-sampler]
 url = "https://github.com/StanLukuvka/ComfyUI-SPEED-Sampler.git"

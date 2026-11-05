@@ -31,9 +31,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version as pkg_version
@@ -466,6 +468,7 @@ class NodePin:
     url: str
     ref: str
     extras: tuple[str, ...] = ()  # [project.optional-dependencies] groups to install
+    patches: tuple[str, ...] = ()  # quilt-style local patches, applied in order
 
 
 MANIFEST_PATH = Path(__file__).resolve().parent.parent / "custom_nodes.manifest.toml"
@@ -519,7 +522,7 @@ def parse_manifest(text: str) -> dict[str, NodePin]:
     for name, table in nodes.items():
         if not isinstance(table, dict):
             raise ValueError(f"[nodes.{name}]: expected a table with url and ref")
-        unknown = set(table) - {"url", "ref", "extras"}
+        unknown = set(table) - {"url", "ref", "extras", "patches"}
         if unknown:
             raise ValueError(f"[nodes.{name}]: unknown key(s): {', '.join(sorted(unknown))}")
         url = table.get("url")
@@ -553,7 +556,27 @@ def parse_manifest(text: str) -> dict[str, NodePin]:
                     f"[nodes.{name}]: duplicate extra(s): {', '.join(extras_raw)}"
                 )
             extras = tuple(extras_raw)
-        pins[name] = NodePin(url=url, ref=ref, extras=extras)
+        patches: tuple[str, ...] = ()
+        patches_raw = table.get("patches", [])
+        if patches_raw:
+            if not isinstance(patches_raw, list) or not all(
+                isinstance(p, str) and p.strip() for p in patches_raw
+            ):
+                raise ValueError(
+                    f"[nodes.{name}]: patches must be a list of non-empty strings"
+                )
+            for p in patches_raw:
+                if p != p.strip() or "/" in p or "\\" in p or p in (".", "..") or p.startswith("-"):
+                    raise ValueError(
+                        f"[nodes.{name}]: patch {p!r} is not a plain file name relative "
+                        "to custom_nodes_patches/"
+                    )
+            if len(set(patches_raw)) != len(patches_raw):
+                raise ValueError(
+                    f"[nodes.{name}]: duplicate patch(es): {', '.join(patches_raw)}"
+                )
+            patches = tuple(patches_raw)
+        pins[name] = NodePin(url=url, ref=ref, extras=extras, patches=patches)
     return pins
 
 
@@ -648,6 +671,24 @@ def _git_rc(repo: Path, *args: str) -> bool:
     )
 
 
+def _git_env_rc(repo: Path, env: dict[str, str], *args: str) -> bool:
+    """_git_rc with extra environment (e.g. GIT_INDEX_FILE) on the git call."""
+    return (
+        subprocess.run(
+            ["git", "-C", str(repo), *args], capture_output=True, env=env
+        ).returncode
+        == 0
+    )
+
+
+def _git_env_out(repo: Path, env: dict[str, str], *args: str) -> str:
+    """_git_out with extra environment (e.g. GIT_INDEX_FILE) on the git call."""
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, env=env
+    )
+    return proc.stdout if proc.returncode == 0 else ""
+
+
 def _git_run(repo: Path | None, *args: str) -> int:
     """Run git with stdio inherited (clone/fetch/checkout progress is output)."""
     cmd = ["git"] if repo is None else ["git", "-C", str(repo)]
@@ -665,6 +706,72 @@ def is_dirty(porcelain: str) -> bool:
     discard — git itself only refuses a checkout on a path collision.
     """
     return any(not line.startswith("?? ") for line in porcelain.splitlines())
+
+
+PATCHES_DIR = Path(__file__).resolve().parent.parent / "custom_nodes_patches"
+
+
+def _patch_files(name: str, pin: NodePin) -> list[Path]:
+    """Absolute paths of a node's declared patch files, in manifest order.
+
+    A declared file that does not exist is a hard error: a patch list is a
+    promise about the checkout's content, never silently partially kept.
+    """
+    files = []
+    for p in pin.patches:
+        path = PATCHES_DIR / name / p
+        if not path.is_file():
+            raise SyncError(f"declared patch file not found: {path}")
+        files.append(path)
+    return files
+
+
+def _patches_applied(repo: Path, files: list[Path]) -> bool:
+    """True when the worktree diff is exactly the declared patch stack on top
+    of HEAD, i.e. the whole stack unwinds back to the pinned ref's tree."""
+    # Per-patch `apply --check --reverse` false-negatives on overlapping hunks
+    # (a later patch mutates an earlier patch's context), and a single
+    # --check invocation validates all diffs against one state without
+    # simulating them sequentially — so unwind for real, onto a temp index
+    # seeded with the worktree, and require the result to equal HEAD's tree.
+    with tempfile.NamedTemporaryFile(suffix=".index") as idx:
+        env = {**os.environ, "GIT_INDEX_FILE": idx.name}
+        if not _git_env_rc(repo, env, "read-tree", "HEAD"):
+            return False
+        if not _git_env_rc(repo, env, "add", "-u"):
+            return False
+        for f in reversed(files):
+            if not _git_env_rc(repo, env, "apply", "--cached", "--reverse", str(f)):
+                return False
+        tree = _git_env_out(repo, env, "write-tree")
+        return bool(tree) and tree == _git_out(repo, "rev-parse", "HEAD^{tree}")
+
+
+def apply_patches(repo: Path, name: str, files: list[Path]) -> str | None:
+    """Converge the worktree onto ref + declared patches; an error message or None.
+
+    Model: plain `git apply` (not `git am`) so patches stay simple diffs,
+    trivially regenerated and never needing commit identity. On every sync
+    the worktree must look like either the clean pinned ref or the ref with
+    the full stack applied — anything else is a refusal, never discarded.
+    """
+    if _git_out(repo, "diff", "HEAD"):
+        if _patches_applied(repo, files):
+            print(f"{name}: patches already applied ({len(files)} patch(es))")
+            return None
+        return (
+            "dirty worktree changes are not explained by the declared patches; "
+            "commit/stash them, or reset to the pinned ref and re-run"
+        )
+    for f in files:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "apply", str(f)], capture_output=True, text=True
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip()
+            return f"patch failed to apply: {f.name}: {detail}"
+    print(f"{name}: applied {len(files)} patch(es)")
+    return None
 
 
 def repo_state(
@@ -784,6 +891,10 @@ def sync_node(
     A missing repo is cloned (all branches + tags), an existing one fetched
     first so every pin resolves at fetch time; the resolved full hash is
     echoed either way. Refusals print loudly and never mutate anything.
+    A node declaring patches must additionally end at ref + stack: the
+    worktree has to match either the clean ref or the ref with every patch
+    applied — anything else refuses; a matching stack resets before a ref
+    move and is re-applied after convergence.
     """
     repo = CUSTOM_NODES_DIR / name
 
@@ -827,11 +938,45 @@ def sync_node(
         state = repo_state(repo, target=target, branch=branch)
         plan = plan_sync(state, target, branch)
         if plan.verb == "ok":
+            if pin.patches:
+                if dry_run:
+                    print(f"{name}: would apply {len(pin.patches)} patch(es)")
+                    return None
+                try:
+                    err = apply_patches(repo, name, _patch_files(name, pin))
+                except SyncError as e:
+                    err = str(e)
+                if err:
+                    print(f"{name}: REFUSED: {err} (ref {pin.ref})", file=sys.stderr)
+                    if refusals is not None:
+                        refusals.add(name)
+                    return None
             if did:
                 print(f"{name}: {' + '.join(did)} -> {target} (ref {pin.ref})")
             else:
                 print(f"{name}: ok {target} (ref {pin.ref})")
             return target
+        patch_files: list[Path] | None = None
+        if plan.verb == "refuse" and plan.detail.startswith("dirty worktree") and pin.patches:
+            # a patch-declared node's dirt is legitimate when it is exactly
+            # the applied stack; reset it so the ref move can proceed (the
+            # stack is re-applied right after convergence)
+            try:
+                patch_files = _patch_files(name, pin)
+            except SyncError as e:
+                print(f"{name}: FAILED: {e}", file=sys.stderr)
+                if refusals is not None:
+                    refusals.add(name)
+                return None
+            if _patches_applied(repo, patch_files):
+                if dry_run:
+                    print(f"{name}: would reset the applied patch stack and re-converge")
+                    return None
+                if _git_run(repo, "reset", "--hard", "HEAD") != 0:
+                    print(f"{name}: FAILED: git reset --hard HEAD", file=sys.stderr)
+                    return None
+                did.append("reset patch stack")
+                continue
         if plan.verb == "refuse":
             print(f"{name}: REFUSED: {plan.detail} (ref {pin.ref})", file=sys.stderr)
             if refusals is not None:
