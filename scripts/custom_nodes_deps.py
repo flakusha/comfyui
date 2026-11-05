@@ -24,6 +24,10 @@ Subcommands:
            nodes and replaces ComfyUI-Manager's install/update for them;
            once every node is manifest-managed, the "manager" extra in
            pyproject.toml can be dropped (deliberately left in place).
+           sync --stamp-patches-base NAME... settles NAME at its pinned ref
+           (patch stack applied) and records the resolved commit as the
+           node's patches_base: the upstream commit the stack was last
+           known-good on.
 """
 
 from __future__ import annotations
@@ -469,6 +473,9 @@ class NodePin:
     ref: str
     extras: tuple[str, ...] = ()  # [project.optional-dependencies] groups to install
     patches: tuple[str, ...] = ()  # quilt-style local patches, applied in order
+    # commit the patch stack was last known-good on; None = unrecorded
+    # (legacy stacks that predate the field), "unknown" = explicitly unrecorded
+    patches_base: str | None = None
 
 
 MANIFEST_PATH = Path(__file__).resolve().parent.parent / "custom_nodes.manifest.toml"
@@ -522,7 +529,7 @@ def parse_manifest(text: str) -> dict[str, NodePin]:
     for name, table in nodes.items():
         if not isinstance(table, dict):
             raise ValueError(f"[nodes.{name}]: expected a table with url and ref")
-        unknown = set(table) - {"url", "ref", "extras", "patches"}
+        unknown = set(table) - {"url", "ref", "extras", "patches", "patches_base"}
         if unknown:
             raise ValueError(f"[nodes.{name}]: unknown key(s): {', '.join(sorted(unknown))}")
         url = table.get("url")
@@ -576,7 +583,20 @@ def parse_manifest(text: str) -> dict[str, NodePin]:
                     f"[nodes.{name}]: duplicate patch(es): {', '.join(patches_raw)}"
                 )
             patches = tuple(patches_raw)
-        pins[name] = NodePin(url=url, ref=ref, extras=extras, patches=patches)
+        patches_base = table.get("patches_base")
+        if patches_base is not None:
+            if not isinstance(patches_base, str):
+                raise ValueError(f"[nodes.{name}]: patches_base must be a string")
+            if patches_base != "unknown" and not _HASH_RE.match(patches_base):
+                raise ValueError(
+                    f"[nodes.{name}]: patches_base must be a 7-40 char lowercase hex "
+                    'commit hash or "unknown"'
+                )
+            if not patches:
+                raise ValueError(f"[nodes.{name}]: patches_base requires patches")
+        pins[name] = NodePin(
+            url=url, ref=ref, extras=extras, patches=patches, patches_base=patches_base
+        )
     return pins
 
 
@@ -774,6 +794,27 @@ def apply_patches(repo: Path, name: str, files: list[Path]) -> str | None:
     return None
 
 
+def warn_base_drift(name: str, pin: NodePin, target: str) -> None:
+    """Warn (never refuse) when the recorded patches_base differs from the
+    resolved ref.
+
+    Drift is expected — patches apply fine across nearby commits, and
+    `git apply` validates every hunk against the tree it lands on — so the
+    base is traceability ("which commit was this stack known-good on"),
+    not a safety gate. Stacks without a usable base (field absent for
+    legacy stacks, or the explicit "unknown") stay silent.
+    """
+    base = pin.patches_base
+    if not base or base == "unknown" or base == target:
+        return
+    print(
+        f"{name}: WARNING: patches_base {base} differs from resolved ref {target} "
+        f"— patch stack last known-good on {base}; re-stamp with "
+        f"--stamp-patches-base once verified on {target}",
+        file=sys.stderr,
+    )
+
+
 def repo_state(
     repo: Path, target: str | None = None, branch: str | None = None
 ) -> RepoState:
@@ -938,6 +979,7 @@ def sync_node(
         state = repo_state(repo, target=target, branch=branch)
         plan = plan_sync(state, target, branch)
         if plan.verb == "ok":
+            warn_base_drift(name, pin, target)
             if pin.patches:
                 if dry_run:
                     print(f"{name}: would apply {len(pin.patches)} patch(es)")
@@ -1068,6 +1110,137 @@ def run_sync_manifest(manifest: Path, dry_run: bool = False) -> int:
     return 1 if failed else 0
 
 
+def stamp_manifest_text(text: str, name: str, sha: str) -> tuple[str, str | None]:
+    """Insert or update `patches_base = "<sha>"` inside [nodes.<name>]'s text
+    block, leaving every other byte of the manifest untouched (comments and
+    formatting survive; a toml serializer would not). Returns
+    (new_text, error); error is None on success.
+    """
+    lines = text.splitlines(keepends=True)
+    header = re.compile(rf"^\[nodes\.{re.escape(name)}\]\s*(?:#.*)?$")
+    start = next((i for i, l in enumerate(lines) if header.match(l)), None)
+    if start is None:
+        return text, f"[nodes.{name}]: table not found"
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].startswith("[")),
+        len(lines),
+    )
+    existing = re.compile(r'^(\s*patches_base\s*=\s*)"[^"]*"')
+    for i in range(start + 1, end):
+        if existing.match(lines[i]):
+            # re-stamp in place; anything after the closing quote (a trailing
+            # comment) survives
+            lines[i] = existing.sub(lambda m: f'{m.group(1)}"{sha}"', lines[i], count=1)
+            return "".join(lines), None
+    patches_key = re.compile(r"^\s*patches\s*=")
+    for i in range(start + 1, end):
+        if not patches_key.match(lines[i]):
+            continue
+        close = i
+        while close < end and not lines[close].rstrip().endswith("]"):
+            close += 1
+        if close >= end:
+            return text, (
+                f"[nodes.{name}]: cannot find the end of the patches array; "
+                "close it with a ']' line and re-run"
+            )
+        indent = re.match(r"\s*", lines[i]).group(0)
+        lines.insert(close + 1, f'{indent}patches_base = "{sha}"\n')
+        return "".join(lines), None
+    return text, f"[nodes.{name}]: declares no patches to stamp a base for"
+
+
+def run_stamp_patches_base(manifest: Path, names: list[str], dry_run: bool = False) -> int:
+    """Settle the named patch-declaring node(s) at their pinned refs (patches
+    applied) and record each resolved hash as the node's patches_base in the
+    manifest — the commit the stack was just verified against. This is a
+    subset sync: other nodes are untouched and the last-settled refs record
+    (custom-nodes-refs.json) is deliberately not overwritten.
+    """
+    try:
+        text = manifest.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        print(f"ERROR: manifest not found: {manifest}", file=sys.stderr)
+        return 1
+    try:
+        pins = parse_manifest(text)
+    except (tomllib.TOMLDecodeError, ValueError) as e:
+        print(f"ERROR: {manifest}: {e}", file=sys.stderr)
+        return 1
+
+    failures: list[str] = []
+    for name in names:
+        pin = pins.get(name)
+        if pin is None:
+            print(f"{name}: ERROR: not in {manifest}", file=sys.stderr)
+            failures.append(name)
+        elif not pin.patches:
+            print(
+                f"{name}: ERROR: declares no patches; patches_base has nothing to record",
+                file=sys.stderr,
+            )
+            failures.append(name)
+
+    resolved: dict[str, str] = {}
+    refusals: set[str] = set()
+    for name in names:
+        if name in failures:
+            continue
+        hash_ = sync_node(name, pins[name], dry_run=dry_run, refusals=refusals)
+        if hash_:
+            resolved[name] = hash_
+        elif not (dry_run and name not in refusals):
+            failures.append(name)  # sync_node printed the refusal
+        # else: a dry-run plan (would clone/move) — the prediction below
+        # reports the stamp that would follow; a plan is not a failure
+
+    stamped = 0
+    for name in names:
+        sha = resolved.get(name)
+        if sha is None and dry_run and name not in refusals and name in pins:
+            # a planned (dry-run) settle has no hash yet; resolve_pin against
+            # the already-fetched refs predicts where convergence will land
+            try:
+                sha, _ = resolve_pin(CUSTOM_NODES_DIR / name, pins[name].ref)
+            except SyncError:
+                print(f"{name}: would clone/settle, then stamp its resolved hash")
+        if sha is None:
+            continue
+        if dry_run:
+            print(f'{name}: would stamp patches_base = "{sha}" in {manifest.name}')
+            continue
+        new_text, err = stamp_manifest_text(text, name, sha)
+        if err:
+            print(f"{name}: ERROR: {err}", file=sys.stderr)
+            failures.append(name)
+            continue
+        try:
+            parse_manifest(new_text)  # never leave broken TOML behind
+        except (tomllib.TOMLDecodeError, ValueError) as e:
+            print(
+                f"{name}: ERROR: stamping would break the manifest: {e}",
+                file=sys.stderr,
+            )
+            failures.append(name)
+            continue
+        text = new_text
+        stamped += 1
+        print(f'{name}: stamped patches_base = "{sha}" in {manifest.name}')
+
+    if stamped:
+        try:
+            manifest.write_text(text, encoding="utf-8")
+        except OSError as exc:
+            print(f"ERROR: could not write {manifest}: {exc}", file=sys.stderr)
+            return 1
+    if failures:
+        print(
+            f"{len(failures)} node(s) not stamped: {', '.join(sorted(set(failures)))}",
+            file=sys.stderr,
+        )
+    return 1 if failures else 0
+
+
 # ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
@@ -1156,10 +1329,22 @@ def main() -> int:
         action="store_true",
         help="Plan only: resolve pins against last-fetched refs, mutate nothing",
     )
+    sync_parser.add_argument(
+        "--stamp-patches-base",
+        nargs="+",
+        metavar="NODE",
+        help="Sync only these patch-declaring node(s), then record each node's "
+        "resolved commit hash as its patches_base in the manifest "
+        "(inserted next to patches, or updated in place on re-stamp)",
+    )
 
     args = parser.parse_args()
 
     if args.command == "sync":
+        if args.stamp_patches_base:
+            return run_stamp_patches_base(
+                args.manifest, args.stamp_patches_base, args.dry_run
+            )
         return run_sync_manifest(args.manifest, args.dry_run)
 
     if not HAS_PACKAGING:

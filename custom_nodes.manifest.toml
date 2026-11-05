@@ -50,6 +50,20 @@
 #        is refused loudly, never discarded, and a ref move under an applied
 #        stack resets it first and re-applies after convergence. Patchless
 #        nodes keep the plain dirty-worktree refusal unchanged.
+#   patches_base optional commit hash (7-40 lowercase hex, or the literal
+#        "unknown") recording the upstream commit this node's patch stack
+#        was last known-good on. Written by the tooling, not by hand:
+#        `python scripts/custom_nodes_deps.py sync --stamp-patches-base
+#        <node>` settles the node at its pinned ref with the stack applied
+#        and stamps the resolved SHA here (re-run it after moving a ref to
+#        re-stamp deliberately). At sync time a base that differs from the
+#        resolved ref is a WARNING naming both SHAs — drift is expected
+#        (patches apply fine across nearby commits; git apply validates the
+#        hunks against whatever tree they land on) — never a refusal; the
+#        base exists so a future ref move starts from a known-good point
+#        instead of guesswork. Requires patches. Pre-existing stacks whose
+#        original base was never recorded stay without the field (absent =
+#        silent); "unknown" is the explicit form of the same admission.
 #
 # Behavior: an existing clone already at the pinned ref is left untouched;
 # a wrong ref is fetched and checked out; a dirty worktree (uncommitted
