@@ -75,6 +75,10 @@ dependencies = [
   "rocm-sdk-libraries==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "rocm-sdk-device-gfx1100==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "amd-torch-device-gfx1100==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  # The gfx1100 leaf does not depend on the gfx110x family wheel (upstream packaging bug
+  # pytorch/pytorch#194498); without it the AOTriton fused-SDPA kernel images are missing
+  # and every fused SDPA launch raises hipErrorInvalidImage.
+  "amd-torch-device-gfx110x==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "amd-torchvision-device-gfx1100==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
@@ -239,6 +243,7 @@ rocm-sdk-core = { index = "amd-rocm" }
 rocm-sdk-libraries = { index = "amd-rocm" }
 rocm-sdk-device-gfx1100 = { index = "amd-rocm" }
 amd-torch-device-gfx1100 = { index = "amd-rocm" }
+amd-torch-device-gfx110x = { index = "amd-rocm" }
 amd-torchvision-device-gfx1100 = { index = "amd-rocm" }
 
 [[tool.uv.index]]
