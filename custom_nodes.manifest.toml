@@ -145,7 +145,12 @@ extras = ["document_export", "llm"]
 [nodes.comfyui-minimaxh3-director]
 url = "https://github.com/seesee75-commits/ComfyUI-MiniMaxH3-Director"
 ref = "main"
-patches = ["0001-ai-request-honors-provider-timeout.patch", "0002-ai-panel-persists-provider-choice.patch", "0003-legacy-character-analysis-no-browser-timeout.patch", "0004-ai-loader-max-tokens-thinking-budget.patch"]
+patches = [
+  "0001-ai-request-honors-provider-timeout.patch",
+  "0002-ai-panel-persists-provider-choice.patch",
+  "0003-legacy-character-analysis-no-browser-timeout.patch",
+  "0004-ai-loader-max-tokens-thinking-budget.patch",
+]
 
 [nodes.comfyui-speed-sampler]
 url = "https://github.com/StanLukuvka/ComfyUI-SPEED-Sampler.git"
