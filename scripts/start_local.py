@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     os.chdir(REPO_ROOT)
     extra = list(sys.argv[1:] if argv is None else argv)
     env = dict(os.environ)
+    env["ROCR_VISIBLE_DEVICES"] = "0"  # pin to gfx1100 dGPU; iGPU gfx1036 disables comfy-kitchen WMMA via capability intersection
     # WAS Node Suite pip-installs missing deps at import, uninstalling opencv-python first —
     # which deletes files shared with opencv-python-headless. This venv has no pip anyway,
     # so let it skip rather than let a missing dep take the whole pack down.
