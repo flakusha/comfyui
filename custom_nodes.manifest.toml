@@ -81,6 +81,7 @@ ref = "main"
 [nodes.ComfyUI-DaSiWa-Nodes]
 url = "https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes.git"
 ref = "main"
+patches = ["0001-continuity-analyze-cancel-on-client-disconnect.patch"]
 
 [nodes.ComfyUI-DeGrid]
 url = "https://github.com/lunaaispace-eng/ComfyUI-DeGrid.git"
@@ -97,7 +98,10 @@ ref = "main"
 [nodes.ComfyUI-H3-Multishot]
 url = "https://github.com/jlucasmcrell/ComfyUI-H3-Multishot"
 ref = "master"
-patches = ["0001-probe-includes-keyframe-audio-latents.patch"]
+patches = [
+  "0001-probe-includes-keyframe-audio-latents.patch",
+  "0001-joyecho-llm-timeout-and-interrupt.patch",
+]
 patches_base = "unknown"
 
 [nodes.ComfyUI-Krea-Moodboards]
@@ -123,6 +127,7 @@ ref = "main"
 [nodes.comfyui-easy-use]
 url = "https://github.com/yolain/ComfyUI-Easy-Use"
 ref = "main"
+patches = ["0001-cloud-api-timeouts.patch"]
 
 [nodes.comfyui-impact-pack]
 url = "https://github.com/ltdrdata/ComfyUI-Impact-Pack"
@@ -147,6 +152,7 @@ ref = "main"
 [nodes.comfyui_llama_swap]
 url = "https://github.com/ai-joe-git/comfyui_llama_swap.git"
 ref = "main"
+patches = ["0001-null-content-graceful-error.patch"]
 
 [nodes.rgthree-comfy]
 url = "https://github.com/rgthree/rgthree-comfy"
@@ -176,6 +182,7 @@ patches = [
   "0010-cenhance-cancel-unload-and-duration-message.patch",
   "0011-ai-routes-cancel-on-client-disconnect.patch",
   "0012-lyric-stamps-reach-planning-prompts.patch",
+  "0013-locked-audio-encoded-once-per-part.patch",
 ]
 patches_base = "6664d75f459d06a9672ac8fbf28ffec59fbaf71a"
 
