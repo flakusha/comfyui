@@ -157,7 +157,7 @@ url = "https://github.com/WASasquatch/was-node-suite-comfyui.git"
 ref = "main"
 # .docx/.odt/.pdf export on Save (python-docx, odfdo, xhtml2pdf); vector_stores stays opt-in.
 extras = ["document_export", "llm"]
-patches = ["0001-web-fetches-honor-base-path.patch", "0002-web-fetches-use-api-and-base-path.patch"]
+patches = ["0001-web-fetches-honor-base-path.patch"]
 patches_base = "408ed3a16fb78968f89e511995236bc15e4be962"
 
 [nodes.comfyui-minimaxh3-director]
