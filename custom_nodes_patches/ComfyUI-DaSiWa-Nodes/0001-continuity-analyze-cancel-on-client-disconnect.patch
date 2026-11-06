@@ -1,0 +1,52 @@
+diff --git a/nodes/h3_continuity/routes.py b/nodes/h3_continuity/routes.py
+index 80275d9..a79e438 100644
+--- a/nodes/h3_continuity/routes.py
++++ b/nodes/h3_continuity/routes.py
+@@ -5,6 +5,30 @@ from .core import ClipStore, safe_id
+ from .video_source import prepare_video, read_manifest, manifest_dir
+ 
+ 
++def _disconnect_cancel(request):
++    """An event set when the browser walks away from this request.
++
++    The analyze draft runs outside the queue, so no Cancel ever sets ComfyUI's
++    interrupt flag for it; a closed dialog left the Forge LLM generating for
++    nobody until it answered. aiohttp never cancels a handler whose client has
++    left — it tears the connection down around it (the handler's transport goes
++    closing, then None) — so a watcher polls exactly that and sets the event
++    the draft's streaming backend checks between lines.
++    """
++    gone = asyncio.Event()
++
++    async def watch():
++        while True:
++            transport = getattr(request, "transport", None)
++            if transport is None or transport.is_closing():
++                gone.set()
++                return
++            await asyncio.sleep(0.25)
++
++    watcher = asyncio.create_task(watch())
++    return gone, watcher
++
++
+ def register_routes(server=None):
+     if server is None:
+         from server import PromptServer
+@@ -152,9 +176,13 @@ def register_routes(server=None):
+             extension = int(body.get("extension_frames", 119))
+             if extension < 17 or extension > 357 or extension % 17:
+                 raise ValueError("Invalid continuation duration.")
+-            result = await asyncio.to_thread(
+-                h3_forge.generate_continuity_draft, metadata, idea,
+-                directory, model, settings, release_memory, None, extension)
++            cancel, watcher = _disconnect_cancel(request)
++            try:
++                result = await asyncio.to_thread(
++                    h3_forge.generate_continuity_draft, metadata, idea,
++                    directory, model, settings, release_memory, cancel, extension)
++            finally:
++                watcher.cancel()
+             result["source_kind"] = kind
+             return web.json_response(result)
+         except (ValueError, KeyError, OSError, TypeError, h3_forge.ForgeError) as exc:

@@ -1,0 +1,37 @@
+diff --git a/writer_pack/ComfyUI_JoyAI_Echo_GGUF_Nodes/nodes.py b/writer_pack/ComfyUI_JoyAI_Echo_GGUF_Nodes/nodes.py
+index 32c00c6..ee96251 100644
+--- a/writer_pack/ComfyUI_JoyAI_Echo_GGUF_Nodes/nodes.py
++++ b/writer_pack/ComfyUI_JoyAI_Echo_GGUF_Nodes/nodes.py
+@@ -4363,11 +4363,16 @@ class JoyEcho_LLMEnhance:
+                      "Authorization": f"Bearer {api_key.strip()}"}
+             print(f"[JoyEcho] REVISE: calling {model_name}...", flush=True)
+             try:
++                import comfy.model_management as _mm
++                _mm.throw_exception_if_processing_interrupted()
+                 _rq = urllib.request.Request(_url, data=_payload, headers=_hdrs,
+                                              method="POST")
+-                with urllib.request.urlopen(_rq, timeout=86400) as _rs:
++                with urllib.request.urlopen(_rq, timeout=600) as _rs:
+                     _rr = json.loads(_rs.read().decode("utf-8"))
++                _mm.throw_exception_if_processing_interrupted()
+                 _rtext = _rr["choices"][0]["message"]["content"].strip()
++            except comfy.model_management.InterruptProcessingException:
++                raise  # a Cancel must reach ComfyUI, not fall back to the original script
+             except Exception as _e:  # noqa: BLE001
+                 print(f"[JoyEcho] REVISE: call failed ({_e}); keeping ORIGINAL "
+                       f"script.", flush=True)
+@@ -4684,10 +4689,13 @@ class JoyEcho_LLMEnhance:
+         data = None
+         _perr = None
+         for _attempt in range(3):
++            import comfy.model_management as _mm
++            _mm.throw_exception_if_processing_interrupted()
+             req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+             try:
+-                with urllib.request.urlopen(req, timeout=86400) as resp:
++                with urllib.request.urlopen(req, timeout=600) as resp:
+                     result = json.loads(resp.read().decode("utf-8"))
++                _mm.throw_exception_if_processing_interrupted()
+             except urllib.error.HTTPError as e:
+                 body = e.read().decode("utf-8", errors="replace")
+                 raise RuntimeError(f"LLM API error {e.code}: {body}")
