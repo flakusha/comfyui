@@ -1,0 +1,210 @@
+diff --git a/web/threejs/module_widgets.js b/web/threejs/module_widgets.js
+index 1e3748e..8deec64 100644
+--- a/web/threejs/module_widgets.js
++++ b/web/threejs/module_widgets.js
+@@ -6,6 +6,7 @@
+ // Every widget is saved and sent whether it is drawn or not.
+ 
+ import { app } from "../../../scripts/app.js";
++import { api } from "../../../scripts/api.js";
+ import { growSockets } from "../interface/grow_sockets.js";
+ 
+ const EXT_NAME = "WASNodeSuite.ThreeModuleUI";
+@@ -63,7 +64,7 @@ async function declarationFor(label) {
+   if (known.has(label)) return known.get(label);
+   let answer = null;
+   try {
+-    const response = await fetch(`${ROUTE}?label=${encodeURIComponent(label)}`, {
++    const response = await api.fetchApi(`${ROUTE}?label=${encodeURIComponent(label)}`, {
+       cache: "no-store",
+     });
+     if (response.ok) {
+diff --git a/web/threejs/render_jobs.js b/web/threejs/render_jobs.js
+index c330faf..f98d78c 100644
+--- a/web/threejs/render_jobs.js
++++ b/web/threejs/render_jobs.js
+@@ -243,7 +243,7 @@ async function serveJobs() {
+     let taken = [];
+     try {
+         const asking = `${ROUTE}?client_id=${encodeURIComponent(sessionId())}`;
+-        const answer = await fetch(asking, { cache: "no-store" });
++        const answer = await api.fetchApi(asking, { cache: "no-store" });
+         if (!answer.ok) return 0;
+         taken = (await answer.json()).jobs || [];
+     } catch (error) {
+@@ -251,7 +251,7 @@ async function serveJobs() {
+     }
+ 
+     for (const job of taken) {
+-        const post = (payload) => fetch(ROUTE, {
++        const post = (payload) => api.fetchApi(ROUTE, {
+             method: "POST",
+             headers: { "Content-Type": "application/json" },
+             body: JSON.stringify({ token: job.token, ...payload }),
+diff --git a/web/threejs/runtime.js b/web/threejs/runtime.js
+index 96b8dac..d99b5c9 100644
+--- a/web/threejs/runtime.js
++++ b/web/threejs/runtime.js
+@@ -35,6 +35,19 @@ const SCHEMA_VERSION = 1;
+ // Where ComfyUI serves an asset a Three node holds.
+ const ASSET_ROUTE = "/was/threejs/api/asset";
+ 
++// The base path the app itself is served under, read from this file's own address inside
++// ComfyUI, so an asset route keeps the prefix a reverse proxy serves the page at. An exported
++// page keeps this file beside itself, so nothing is added there.
++const APP_ROOT = (() => {
++    try {
++        const path = decodeURIComponent(new URL(import.meta.url).pathname);
++        const at = path.indexOf("/extensions/");
++        return at > 0 ? path.slice(0, at) : "";
++    } catch (error) {
++        return "";
++    }
++})();
++
+ // Folders an exported page keeps its pictures and models in, beside the page.
+ const ARCHIVE_FOLDERS = ["./textures/", "./models/"];
+ 
+@@ -62,12 +75,34 @@ function isAssetRoute(address) {
+         const resolved = new URL(String(address || ""), base);
+         return resolved.origin !== "null"
+             && resolved.origin === new URL(base).origin
+-            && resolved.pathname === ASSET_ROUTE;
++            && (resolved.pathname === ASSET_ROUTE
++                || resolved.pathname === APP_ROOT + ASSET_ROUTE);
+     } catch (error) {
+         return false;
+     }
+ }
+ 
++/**
++ * The address a descriptor's asset is read from.
++ *
++ * A root-relative address loses the base path the app is served under, so one pointing at
++ * the asset route is re-rooted onto the app's own base before a loader reads it. Everything
++ * else is returned as it was given.
++ *
++ * @param {string} address - The address a descriptor holds.
++ * @returns {string} The address to read.
++ */
++function readableAddress(address) {
++    const text = String(address || "");
++    if (!APP_ROOT || !isAssetRoute(text)) return text;
++    try {
++        const resolved = new URL(text, baseAddress());
++        return APP_ROOT + resolved.pathname + resolved.search + resolved.hash;
++    } catch (error) {
++        return text;
++    }
++}
++
+ /**
+  * Whether an address may be read without the network.
+  *
+@@ -356,7 +391,7 @@ function sidecarManager(resources) {
+     const held = resources && typeof resources === "object" ? resources : {};
+     const byName = new Map();
+     for (const [name, url] of Object.entries(held)) {
+-        byName.set(name.toLowerCase(), url);
++        byName.set(name.toLowerCase(), readableAddress(url));
+     }
+ 
+     // A loader answers when it has parsed the model, while its textures are still arriving.
+@@ -374,8 +409,8 @@ function sidecarManager(resources) {
+ 
+     manager.setURLModifier((url) => {
+         const asked = String(url || "");
+-        // An address already pointing at the asset route is the model itself.
+-        if (isAssetRoute(asked)) return asked;
++        // An address pointing at the asset route is ComfyUI's to serve.
++        if (isAssetRoute(asked)) return readableAddress(asked);
+         // Bytes embedded in the model are read where they are.
+         if (/^(data|blob):/i.test(asked.trim())) return asked;
+         let name = "";
+@@ -406,7 +441,7 @@ async function loadModelFile(params) {
+ }
+ 
+ async function readModel(params, manager) {
+-    const address = String(params.url || "");
++    const address = readableAddress(String(params.url || ""));
+     const format = String(params.format || "").toLowerCase();
+     if (!address) throw new Error("Three Load Model gave no address to read from.");
+ 
+@@ -426,7 +461,7 @@ async function readModel(params, manager) {
+         );
+         if (library) {
+             const { MTLLoader } = await import("../vendor/three/loaders/MTLLoader.js");
+-            const materials = await new MTLLoader(manager).loadAsync(params.resources[library]);
++            const materials = await new MTLLoader(manager).loadAsync(readableAddress(params.resources[library]));
+             materials.preload();
+             loader.setMaterials(materials);
+         }
+@@ -801,7 +836,7 @@ export function createRuntime(canvas, statusElement, options = {}) {
+             }
+ 
+             const params = spec.params || {};
+-            const address = String(params.url || "");
++            const address = readableAddress(String(params.url || ""));
+             if (!isHeldAddress(address) && !(networkAllowed && isWebAddress(address))) {
+                 throw new Error(
+                     "A texture names an address outside ComfyUI, and this page fetches only "
+@@ -1352,7 +1387,7 @@ export function createRuntime(canvas, statusElement, options = {}) {
+             const { RoomEnvironment } = await import("../vendor/three/environments/RoomEnvironment.js");
+             room = new RoomEnvironment();
+         } else {
+-            const address = String(params.url || "");
++            const address = readableAddress(String(params.url || ""));
+             if (!address) throw new Error("Three Environment gave no address to read from.");
+             if (!isHeldAddress(address)) {
+                 throw new Error(
+diff --git a/web/viewer/controls/controls_bar.js b/web/viewer/controls/controls_bar.js
+index a0b5890..b2c9e0c 100644
+--- a/web/viewer/controls/controls_bar.js
++++ b/web/viewer/controls/controls_bar.js
+@@ -3,6 +3,7 @@
+  * Creates the toolbar with Edit, Clear, Fullscreen, Download buttons
+  */
+ 
++import { api } from "../../../../scripts/api.js";
+ import { computeThemeTokens } from "../utils/theme.js";
+ import { createZipBlob } from "../utils/zip.js";
+ import { detectContentType, isMultiviewContent, getMultiviewOptions, parseMultiviewContent, stripContentMarker, getAllViews, getView, getViewDisplayName } from "../views/view_loader.js";
+@@ -368,7 +369,7 @@ function createHoldControls(theme, node, elements) {
+     try {
+       const value = await heldValue(node, elements);
+       const clientId = String(globalThis.app?.api?.clientId || globalThis.app?.api?.initialClientId || "");
+-      const answer = await fetch(PAUSE_ROUTE, {
++      const answer = await api.fetchApi(PAUSE_ROUTE, {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify({ node_id: String(node.id), action: "resume", value, client_id: clientId }),
+diff --git a/web/viewer/views/canvas.js b/web/viewer/views/canvas.js
+index ddde421..e83b0f8 100644
+--- a/web/viewer/views/canvas.js
++++ b/web/viewer/views/canvas.js
+@@ -2,6 +2,7 @@
+  * Canvas View - Infinite canvas image compositor with layers, transforms, and drawing tools
+  */
+ 
++import { api } from "../../../../scripts/api.js";
+ import { BaseView, escapeHtml } from "./base_view.js";
+ 
+ // How long the parent waits for a frame to answer with what its canvas holds.
+@@ -3667,7 +3668,7 @@ class CanvasView extends BaseView {
+         type: fileInfo.type || "temp",
+       });
+       try {
+-        const response = await fetch("/view?" + params.toString());
++        const response = await api.fetchApi("/view?" + params.toString());
+         if (!response.ok) throw new Error(`/view answered ${response.status}`);
+         const blob = await response.blob();
+         return await new Promise((resolve, reject) => {
+@@ -3734,7 +3735,7 @@ class CanvasView extends BaseView {
+       // A held run cannot read a widget written after it was queued, so the composite goes
+       // to the route the hold is waiting on.
+       if (node.__was_viewer_held) {
+-        fetch("/was/interface/api/pause", {
++        api.fetchApi("/was/interface/api/pause", {
+           method: "POST",
+           headers: { "Content-Type": "application/json" },
+           body: JSON.stringify({
