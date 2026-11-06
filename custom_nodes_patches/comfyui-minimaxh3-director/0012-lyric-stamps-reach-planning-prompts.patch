@@ -1,0 +1,227 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,13 @@
+ 
+ ## Unreleased
+ 
++- **A song's [mm:ss] stamps reach the planning** (user report, 2026-11-06). 0008 carried an audio card's words into
++  the planning, but read them through the Whisper-alignment helper, which strips the leading `[mm:ss]` stamp from every
++  line - so the planner saw the words without their times and could not pace its beats and lines by them. The words now
++  travel with their stamps: the shot planner (Auto Direct, Make H3 prompt) is given each line exactly as the card
++  stores it, the Sound line names the stamp as a time to pace by and not words to copy, and cards without lyrics
++  change nothing byte for byte. Timed Lock or Copy songs are unchanged - the compiler still places those lines per
++  part.
+ - **Cancel now stops a panel AI request even though it runs outside the queue** (2026-11-06, user report). 0007 watched
+   ComfyUI's interrupt flag, but that flag is only ever raised for a queued prompt: the Studio's Analyze, Direct, Plan,
+   Write and Storyboard buttons with a real provider (e.g. llama-swap) run in plain HTTP routes, so clicking Cancel
+diff --git a/ng/core/lyrics.py b/ng/core/lyrics.py
+--- a/ng/core/lyrics.py
++++ b/ng/core/lyrics.py
+@@ -80,6 +80,16 @@ def plain_lines(text):
+     return out
+ 
+ 
++def stamped_lines(text):
++    """Each lyric line with its [mm:ss] stamps kept; the language tag and blank lines dropped.
++
++    The stamps are the plan's timing information (BUG-095): they say when each line is heard in the song file,
++    so the AI planners pace beats and lines by them. plain_lines stays for the Whisper alignment, which must
++    see the words only. A stamped pause line (a stamp with no words) is kept - it too says when something is."""
++    return [line for line in (raw.strip() for raw in (text or "").splitlines())
++            if line and not LANGUAGE_RE.match(line)]
++
++
+ def _tokens(text):
+     return re.findall(r"\w+", text.lower())
+ 
+diff --git a/ng/core/context_build.py b/ng/core/context_build.py
+--- a/ng/core/context_build.py
++++ b/ng/core/context_build.py
+@@ -22,18 +22,18 @@ def widget_text(widgets, key):
+ 
+ 
+ def widget_lyrics(widgets):
+-    """An audio card's own words, stamps and language tag removed; [] without lyrics.
++    """An audio card's own words, one line each with its [mm:ss] stamp; [] without lyrics.
+ 
+     The card keeps its words in context_options as LRC text; these are what the AI helpers (split into shots,
+     Make H3 prompt) plan the shots from, next to the description - the one audio field beyond it that says WHAT
+-    the sound says (BUG-094: on a card that does not play exactly, the default Voice or a Music style, the timed
+-    path in lyrics.story_lines never sees them, and they reached no prompt at all)."""
++    the sound says (BUG-094) and WHEN (BUG-095: 094 first carried the words but plain_lines dropped their
++    stamps, the timing the planner paces its beats by). lyrics.story_lines keeps its own timed path."""
+     try:
+         options = json.loads(widgets.get("context_options") or "{}")
+     except ValueError:
+         return []
+     text = options.get("lyrics") if isinstance(options, dict) else None
+-    return lyrics.plain_lines(text) if isinstance(text, str) else []
++    return lyrics.stamped_lines(text) if isinstance(text, str) else []
+ 
+ 
+ def card_words(entries, played=False):
+diff --git a/ng/core/split.py b/ng/core/split.py
+--- a/ng/core/split.py
++++ b/ng/core/split.py
+@@ -83,7 +83,8 @@ def split_prompt(idea, seconds, meanings, parts=(), sung=()):
+                      % ", ".join("%s-%s s" % (_seconds(a), _seconds(b)) for a, b in parts))
+     if any(entry.get("lyrics") for entry in meanings):
+         rules.append("The lyrics an audio card carries are that sound's exact words: use them as they are, sung or "
+-                     "spoken by their speaker where the card is heard.")
++                     "spoken by their speaker where the card is heard. A line's [mm:ss] stamp says when it is heard "
++                     "in the song file, to pace the beats and lines by; write the words without the stamp.")
+     if sung:
+         rules.append("These sung lines are already placed at their times, so do NOT put them into lines; let the action follow them: %s."
+                      % "; ".join('%s-%s s "%s"' % (_seconds(a), _seconds(b), words) for a, b, _, words in sung))
+diff --git a/ng/core/builder.py b/ng/core/builder.py
+--- a/ng/core/builder.py
++++ b/ng/core/builder.py
+@@ -107,7 +107,7 @@ def _audio_line(entry):
+     described = (widgets.get("description") or "").strip()
+     line = "- @%s - audio, %s; contains %s%s" % (name, how, ", ".join(content) or "sound", ": " + described if described else "")
+     words = card_words([entry])   # the card's own words (BUG-094): the plan paces its shots and writes its lines by them
+-    return line + ("; its words, to be used as they are: %s" % " / ".join('"%s"' % word for word in words) if words else "")
++    return line + ("; its words, to be used as they are ([mm:ss] = when each line is heard; write the words without it): %s" % " / ".join('"%s"' % word for word in words) if words else "")
+ 
+ 
+ def _rule_line(entry):
+diff --git a/tests/ng/regressions/bug_094_audio_card_lyrics_reach_shot_planning.py b/tests/ng/regressions/bug_094_audio_card_lyrics_reach_shot_planning.py
+--- a/tests/ng/regressions/bug_094_audio_card_lyrics_reach_shot_planning.py
++++ b/tests/ng/regressions/bug_094_audio_card_lyrics_reach_shot_planning.py
+@@ -44,10 +44,11 @@ def audio_card(usage, lyrics_text, context_id="audio_song"):
+ 
+ 
+ class WidgetLyrics(unittest.TestCase):
+-    def test_the_words_survive_their_stamps_and_an_untimed_line_is_kept(self):
+-        """plain_lines strips stamps and the language tag; words without times stay usable words."""
++    def test_the_words_carry_their_stamps_and_an_untimed_line_is_kept(self):
++        """Each line keeps its stamp (BUG-095: the planner's timing information); the language tag goes,
++        and words without times stay usable words."""
+         self.assertEqual(context_build.widget_lyrics(audio_card("voice", TIMED)["widgets"]),
+-                         ["My master, where did you go", "I wait in the hall"])
++                         ["[00:01.00] My master, where did you go", "[00:05.00] I wait in the hall"])
+         self.assertEqual(context_build.widget_lyrics(audio_card("voice", UNTIMED)["widgets"]),
+                          ["Words that no Whisper ever timed", "A second plain line"])
+ 
+@@ -64,7 +65,7 @@ class Meanings(unittest.TestCase):
+         """The card's meaning is what the AI plans the shots from; without the words a Voice or Music style
+         card reached it nameless (the report: filling Lyrics changed nothing)."""
+         meaning = auto_direct._meanings([audio_card("voice", TIMED)])[0]
+-        self.assertEqual(meaning["lyrics"], ["My master, where did you go", "I wait in the hall"])
++        self.assertEqual(meaning["lyrics"], ["[00:01.00] My master, where did you go", "[00:05.00] I wait in the hall"])
+         self.assertEqual(meaning["usage"], "voice")
+ 
+     def test_green_control_cards_without_lyrics_gain_no_key(self):
+diff --git a/tests/ng/regressions/bug_095_lyric_stamps_reach_planning_prompts.py b/tests/ng/regressions/bug_095_lyric_stamps_reach_planning_prompts.py
+new file mode 100644
+--- /dev/null
++++ b/tests/ng/regressions/bug_095_lyric_stamps_reach_planning_prompts.py
+@@ -0,0 +1,107 @@
++"""BUG-095 Regression Test: a song card's [mm:ss] stamps reach the planning requests verbatim.
++
++BUG-094 carried an audio card's words into the planning, but widget_lyrics read them through
++lyrics.plain_lines, which strips every leading [mm:ss] stamp - the timing the planner needs to pace
++beats and lines. The stamp was dropped at that one call, so all three request paths (split into shots,
++the draft/redraft prompt, Make H3 prompt's Sound line) carried the words without their times.
++
++Fix: lyrics.stamped_lines keeps each line as the card stores it (stamps and all; language tag and blank
++lines dropped) and widget_lyrics serves it. plain_lines is untouched for the Whisper alignment, which
++must see the words only. Workflows without lyrics stay byte-identical: an empty field still adds no key,
++no Sound words and no rule.
++
++Run:
++    python3 tests/ng/regressions/bug_095_lyric_stamps_reach_planning_prompts.py
++"""
++import json
++import os
++import sys
++import unittest
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++from _pack import module
++
++lyrics = module("ng.core.lyrics")
++context_build = module("ng.core.context_build")
++auto_direct = module("ng.core.auto_direct")
++builder = module("ng.core.builder")
++
++TIMED = "[la:English]\n[00:01.00] My master, where did you go\n[00:05.00] I wait in the hall"
++STAMPED = ["[00:01.00] My master, where did you go", "[00:05.00] I wait in the hall"]
++IDEA, SECONDS = "The singer calls her master.", 10.0
++QUICK = {"direction": "auto", "speech": "singing", "language": "English"}
++DRAFT_SHOTS = json.dumps({"schema_version": 1, "format": "h3-director-shots", "shots": [
++    {"id": "shot1", "start": 0, "end": 10, "text": "A singer.", "media": [], "spoken": [], "locked_fields": []}]})
++
++
++def audio_card(usage, lyrics_text):
++    options = {"schema_version": 1}
++    if lyrics_text is not None:
++        options["lyrics"] = lyrics_text
++    return {"media": "audio", "widgets": {"audio": "song.mp3", "name": "Song", "usage": usage,
++                                          "context_id": "audio_song",
++                                          "context_options": json.dumps(options)}}
++
++
++class StampsVerbatim(unittest.TestCase):
++    def test_bug_095_the_stamps_reach_the_split_prompt(self):
++        """AI: split into shots: the Contexts JSON must carry each stamped line verbatim."""
++        prompt = auto_direct.direction_prompt(IDEA, SECONDS, [audio_card("voice", TIMED)])
++        for line in STAMPED:
++            self.assertIn(line, prompt)
++        self.assertIn("write the words without the stamp", prompt)
++
++    def test_bug_095_the_stamps_reach_the_draft_prompt(self):
++        """An existing shot document (draft/redraft) gets the same meanings: stamps verbatim there too."""
++        prompt = auto_direct.direction_prompt(IDEA, SECONDS, [audio_card("voice", TIMED)],
++                                              current_shots=DRAFT_SHOTS)
++        for line in STAMPED:
++            self.assertIn(line, prompt)
++
++    def test_bug_095_the_stamps_reach_the_builder_sound_line(self):
++        """Make H3 prompt: the Sound section carries the stamped words verbatim, with the no-copy guidance."""
++        prompt = builder.plan_prompt(QUICK, "A singer.", SECONDS, [audio_card("voice", TIMED)])
++        for line in STAMPED:
++            self.assertIn('"%s"' % line, prompt)
++        self.assertIn("[mm:ss] = when each line is heard", prompt)
++
++    def test_bug_095_meanings_carry_the_stamped_lines(self):
++        self.assertEqual(auto_direct._meanings([audio_card("voice", TIMED)])[0]["lyrics"], STAMPED)
++
++
++class Untouched(unittest.TestCase):
++    def test_plain_lines_still_strips_for_the_whisper_alignment(self):
++        """The aligner diffs words against recognised speech: it must keep reading the stamp-free lines."""
++        self.assertEqual(lyrics.plain_lines(TIMED), ["My master, where did you go", "I wait in the hall"])
++
++    def test_bug_095_a_timed_lock_song_keeps_its_compiler_placement(self):
++        """Lock/Copy lines stay compiler-placed from the parse, not the meanings: sung hints keep their
++        story-time seconds and the plan is told the lines are already placed."""
++        parts, sung = auto_direct.timing_hints({"shots": "", "continuity": "none"}, [audio_card("lock", TIMED)])
++        self.assertEqual(sung, ((1.0, 5.0, "Song", "My master, where did you go"),
++                                (5.0, 9.0, "Song", "I wait in the hall")))
++        prompt = auto_direct.direction_prompt(IDEA, SECONDS, [audio_card("lock", TIMED)], timing=(parts, sung))
++        self.assertIn("already placed at their times", prompt)
++
++    def test_bug_095_empty_lyrics_give_byte_identical_prompts(self):
++        """An empty Lyrics field must not change a single byte of either request."""
++        for made in (auto_direct.direction_prompt,  # split prompt
++                     lambda idea, s, c: auto_direct.direction_prompt(idea, s, c, current_shots=DRAFT_SHOTS),
++                     lambda idea, s, c: builder.plan_prompt(QUICK, idea, s, c)):
++            self.assertEqual(made(IDEA, SECONDS, [audio_card("voice", None)]),
++                             made(IDEA, SECONDS, [audio_card("voice", "")]))
++
++    def test_bug_095_stamped_lines_edges(self):
++        """Language tag and blank lines go; multi-stamp and pause stamps are timing information and stay."""
++        self.assertEqual(lyrics.stamped_lines(""), [])
++        self.assertEqual(lyrics.stamped_lines(None), [])
++        self.assertEqual(lyrics.stamped_lines("A\n\nB"), ["A", "B"])
++        self.assertEqual(lyrics.stamped_lines("[la:de]\nX"), ["X"])
++        self.assertEqual(lyrics.stamped_lines("[00:01.00][00:04.00] duo"), ["[00:01.00][00:04.00] duo"])
++        self.assertEqual(lyrics.stamped_lines("[00:09.00]"), ["[00:09.00]"])
++        self.assertEqual(lyrics.stamped_lines("Words that no Whisper ever timed\nA second plain line"),
++                         ["Words that no Whisper ever timed", "A second plain line"])
++
++
++if __name__ == "__main__":
++    unittest.main()
