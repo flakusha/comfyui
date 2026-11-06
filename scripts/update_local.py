@@ -12,8 +12,8 @@ routine: python scripts/update_local.py
 --skip-gates  skip post-bump ruff/import checks
 --tests       also run the full upstream tests-unit suite (opt-in; the suite is
               an upstream concern, not this fork's gate)
-pass optional extras through: --extra sage --extra onnx-rocm (rocm and cuda extras are mutually
-exclusive — passing both exits code 2)
+pass optional extras through: --extra sage --extra onnx-rocm (rocm, cuda, and cpu extras are mutually
+exclusive — passing more than one exits code 2)
 first run / after changing extras: uv lock --upgrade first, then this script
 pyproject.toml conflict -> merge hunks BY HAND, never a wholesale side; runbook:
   .tmp/proposals/update-rebase-tooling.md §3b (merge [tool.uv] keys; then uv lock --check).
@@ -143,8 +143,8 @@ def parse_args(argv: list[str] | None = None) -> Options:
     args = parser.parse_args(argv)
 
     extras = tuple(args.extra)
-    if HARDWARE_EXTRAS.issubset(extras):
-        parser.error("--extra rocm and --extra cuda are mutually exclusive")
+    if sum(name in HARDWARE_EXTRAS for name in extras) > 1:
+        parser.error("--extra rocm, --extra cuda, and --extra cpu are mutually exclusive")
     return Options(
         mirror="yes" if args.mirror else "no" if args.no_mirror else "ask",
         force=args.force,
