@@ -1,0 +1,62 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 3a5bb76..f27c7b5 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,13 @@
+ 
+ ## Unreleased
+ 
++- **Cancel answers immediately from the Enhance node, and a non-numeric wired length is named** (2026-11-06).
++  The Enhance node's `finally` asked the provider to unload the model even when a Cancel had already raised
++  InterruptProcessingException, so the interrupt waited on that HTTP round-trip before ComfyUI could start the
++  next job; the unload is now skipped while the interrupt flag is up (the model is evicted by the next run's
++  pre-unload), and success/error paths still unload as before. Separately, a hand-built API graph feeding a
++  non-numeric value into the H3 Director's `duration_seconds` socket died with a bare `ValueError`; it now
++  raises the same named message the negative-value case uses, saying which socket carried what.
+ - **The Director's length can be wired in, and the real length comes out** (2026-11-06). The H3 Director's Length
+   was a widget only: no node could feed a desired duration in, and nothing reported the length the plan actually
+   delivers - the video snaps to H3's 17k+5 frame grid, so it can differ from the request by a fraction of a second.
+diff --git a/minimax_enhance.py b/minimax_enhance.py
+index 4a1c91a..9d884f0 100644
+--- a/minimax_enhance.py
++++ b/minimax_enhance.py
+@@ -17,6 +17,7 @@ import re
+ 
+ import torch
+ 
++import comfy.model_management
+ from comfy_api.latest import io
+ 
+ from . import minimax_media as media
+@@ -571,8 +572,10 @@ class MiniMaxH3EnhancePrompt(io.ComfyNode):
+             prompt = (idea or "").strip()
+         finally:
+             # Backstop for keep_alive, and it also runs when the call blew up half way —
+-            # that is exactly when a model is left sitting in VRAM.
+-            if unload_after:
++            # that is exactly when a model is left sitting in VRAM. On a cancel the flag
++            # read here is the executor's, read-only, and the interrupt should not wait
++            # on an unload round-trip; the next run's pre-unload evicts the model instead.
++            if unload_after and not comfy.model_management.processing_interrupted():
+                 await media.unload_model(provider, url, model_name, api_key)
+ 
+         log.info("[MiniMaxEnhance] %d chars:\n%s", len(prompt), prompt)
+diff --git a/ng/nodes/product_director_node.py b/ng/nodes/product_director_node.py
+index 596a99b..eb8a45f 100644
+--- a/ng/nodes/product_director_node.py
++++ b/ng/nodes/product_director_node.py
+@@ -96,7 +96,13 @@ class NGH3Director(io.ComfyNode):
+         # start/end/duration sockets.
+         project_seconds = float(values["project_seconds"])
+         if values.get("duration_seconds") is not None:
+-            external_seconds = float(values["duration_seconds"])
++            try:
++                external_seconds = float(values["duration_seconds"])
++            except ValueError:
++                raise ValueError("H3 Director: the connected 'duration_seconds' is %r. It is a length in "
++                                 "seconds, so it must be a number — a value that was never set arrives "
++                                 "here as 0, which means use the Length widget."
++                                 % values["duration_seconds"])
+             if external_seconds < 0:
+                 raise ValueError("H3 Director: the connected 'duration_seconds' is %.3gs. It is a length in "
+                                  "seconds and cannot be negative. Check the node feeding it — a value that "

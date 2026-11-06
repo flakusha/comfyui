@@ -1,0 +1,364 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,7 +1,15 @@
+ # Changelog
+
+ ## Unreleased
+
++- **Lyrics reach the planning on every audio card** (user report, 2026-11-06). The Lyrics field fed exactly one
++  consumer, the timed placement for a song played exactly (Use as Lock or Copy, or a Lock/Copy clip on an audio
++  lane); on the default Voice card or a Music style card the words went nowhere - not into the AI's shot planning,
++  not into any render part - so filling the field changed nothing. A card's own words now travel with it wherever
++  the other context does: the shot planner (Auto Direct, Make H3 prompt) is given them next to the description,
++  the Sound line names them, and a soundtrack whose words carry no Whisper times has the plan write its lines
++  instead of calling them unknown. Timed songs are unchanged - the compiler still places those lines per part -
++  and cards without lyrics behave exactly as before.
+ - **Cancel now stops the provider request** (2026-11-06). ComfyUI signals a cancelled queue only by raising its
+   global interrupt flag, and nothing read it mid-request: a running Enhance node and the panel's Analyze, Direct,
+   Plan, Write and Storyboard calls kept the provider generating until it answered or timed out — with a local model
+diff --git a/ng/core/auto_direct.py b/ng/core/auto_direct.py
+index 48ad5cb..a0de968 100644
+--- a/ng/core/auto_direct.py
++++ b/ng/core/auto_direct.py
+@@ -3,7 +3,7 @@ import json
+ 
+ from .ai_json import read_object
+ from .context import DirectorContext
+-from .context_build import card_id, widget_text
++from .context_build import card_id, widget_lyrics, widget_text
+ from .lyrics import story_lines
+ from .preview import plan_preview
+ from .shot_draft import current_records, draft_prompt, parse_draft
+@@ -33,14 +33,25 @@ def timing_hints(director, contexts, probe=None):
+ 
+ 
+ def _meanings(contexts):
+-    return [{"name": entry["widgets"].get("name", ""), "media": entry["media"],
+-             # a control video's source is never described: its figure turned up in the video (T6, 2026-10-16)
+-             "description": "" if "control" in _roles(entry["widgets"]) else entry["widgets"].get("description", ""),
+-             "usage": entry["widgets"].get("usage", ""),
+-             "speaker": entry["widgets"].get("speaker", ""), "context_id": card_id(entry),
+-             "subject_ids": entry["widgets"].get("subject_ids", ""),
+-             # a Text card's own words (a style or rule note), so the AI writes shots that fit them (2026-10-18)
+-             **({"text": widget_text(entry["widgets"], "text").strip()} if entry["media"] == "text" else {})} for entry in contexts]
++    out = []
++    for entry in contexts:
++        meaning = {"name": entry["widgets"].get("name", ""), "media": entry["media"],
++                   # a control video's source is never described: its figure turned up in the video (T6, 2026-10-16)
++                   "description": "" if "control" in _roles(entry["widgets"]) else entry["widgets"].get("description", ""),
++                   "usage": entry["widgets"].get("usage", ""),
++                   "speaker": entry["widgets"].get("speaker", ""), "context_id": card_id(entry),
++                   "subject_ids": entry["widgets"].get("subject_ids", "")}
++        # a Text card's own words (a style or rule note), so the AI writes shots that fit them (2026-10-18)
++        if entry["media"] == "text":
++            meaning["text"] = widget_text(entry["widgets"], "text").strip()
++        # an audio card's own words, the exact lyrics or speech to use (BUG-094: without them a song or speech
++        # card that does not play exactly - the default Voice, a Music style - reached the shots nameless)
++        elif entry["media"] == "audio":
++            words = widget_lyrics(entry["widgets"])
++            if words:
++                meaning["lyrics"] = words
++        out.append(meaning)
++    return out
+ 
+ 
+ def story(idea, contexts):
+diff --git a/ng/core/builder.py b/ng/core/builder.py
+index b7310be..4f853b5 100644
+--- a/ng/core/builder.py
++++ b/ng/core/builder.py
+@@ -10,7 +10,7 @@ import re
+ from . import fields
+ from .ai_json import read_object
+ from .auto_direct import story
+-from .context_build import card_id, widget_text
++from .context_build import card_id, card_words, widget_text
+ from .directions import DIRECTIONS, LANGUAGES, SPEECH, check_adults, direction, shot_count
+ from .split import BEAT_RULE, CAMERA_RULE, _seconds, parse_split, shots_example
+ 
+@@ -105,7 +105,9 @@ def _audio_line(entry):
+            "voice of %s" % widgets.get("speaker") if "voice" in usage and widgets.get("speaker") else
+            "a sound reference (%s)" % ", ".join(usage) if usage else "a sound reference")
+     described = (widgets.get("description") or "").strip()
+-    return "- @%s - audio, %s; contains %s%s" % (name, how, ", ".join(content) or "sound", ": " + described if described else "")
++    line = "- @%s - audio, %s; contains %s%s" % (name, how, ", ".join(content) or "sound", ": " + described if described else "")
++    words = card_words([entry])   # the card's own words (BUG-094): the plan paces its shots and writes its lines by them
++    return line + ("; its words, to be used as they are: %s" % " / ".join('"%s"' % word for word in words) if words else "")
+ 
+ 
+ def _rule_line(entry):
+@@ -134,7 +136,10 @@ def soundtrack(contexts):
+                for entry in contexts)
+ 
+ 
+-def _speech_rule(quick, sung, played, has_request):
++_PACE = "a sung line of 4 to 7 words takes about 3 seconds, so give each shot one line per 3 seconds of its length, and none to a shot shorter than 3 seconds"
++
++
++def _speech_rule(quick, sung, played, has_request, words=(), played_words=()):
+     speech, language = quick["speech"], quick["language"]
+     given = (" If the request gives words to say (in quotes or after 'says:'), use exactly those words in their own language."
+              if has_request else "")
+@@ -150,12 +155,17 @@ def _speech_rule(quick, sung, played, has_request):
+     if sung:
+         return "Speech: the sung lines are already placed at their times (below); lines is []. Show the singer singing them."
+     if played:
++        if played_words:
++            # the soundtrack's own words carry no Whisper times: the shots write the lines and pace them (BUG-094)
++            return ("Speech: the singer sings the soundtrack's own words (see Sound) as they are.%s %s. speaker is the exact name of the singer (without @); delivery is sings." % (given, _PACE))
+         return ("Speech: the singer sings along to the soundtrack, whose words are not known: write no lines ([]) and show the "
+                 "singing performance (mouth, breath, expression) in the action.")
+     # A rendered 10 s song (2026-10-06) sang every word, but the 6-word line of a 2 s last shot was cut off at the end.
+-    return ("Speech: the character sings.%s Otherwise write short original lyrics in %s: a sung line of 4 to 7 words takes "
+-            "about 3 seconds, so give each shot one line per 3 seconds of its length, and none to a shot shorter than 3 "
+-            "seconds. speaker is the exact name of the singer (without @); delivery is sings." % (given, language))
++    if words:
++        return ("Speech: the character sings the words carried on an audio card (see Sound) as they are.%s %s. speaker is "
++                "the exact name of the singer (without @); delivery is sings." % (given, _PACE))
++    return ("Speech: the character sings.%s Otherwise write short original lyrics in %s: %s. speaker is the exact name "
++            "of the singer (without @); delivery is sings." % (given, language, _PACE))
+ 
+ 
+ def _frame_rule(found):
+@@ -231,10 +241,10 @@ def _rules(quick, seconds, found, names, played, parts, sung, kinds_of):
+     return rules
+ 
+ 
+-def _shape(quick, sung, played, kinds_of, undescribed=()):
++def _shape(quick, sung, played, kinds_of, undescribed=(), played_words=()):
+     """The answer's JSON shape. With speech, the example shot carries a line: an empty list in the example made qwen3.5:9b
+     leave a song without lyrics."""
+-    speaks = quick["speech"] != "none" and not sung and not (quick["speech"] == "singing" and played)
++    speaks = quick["speech"] != "none" and not sung and not (quick["speech"] == "singing" and played and not played_words)
+     line = ('{"speaker":"%s","delivery":"%s","language":"%s","text":"..."}' % (
+         "" if quick["speech"] == "voiceover" else next((n for n, (k, _) in kinds_of.items() if k == "figure" and n), "Name"),
+         "sings" if quick["speech"] == "singing" else "says", quick["language"])) if speaks else ""
+@@ -254,13 +264,14 @@ def plan_prompt(quick, idea, seconds, contexts, shown=0, parts=(), sung=()):
+     if not request.strip() and not found:
+         raise ValueError("Make H3 prompt needs a picture on a Context card or a few words in the Prompt.")
+     played = soundtrack(contexts)
++    words, played_words = card_words(contexts, False), card_words(contexts, True)   # the cards' own words (BUG-094)
+     plan = direction(quick["direction"])
+     lines = [
+         "Plan a %s second video. Answer with JSON only, in this shape:" % _seconds(seconds),
+-        _shape(quick, sung, played, kinds_of, undescribed),
++        _shape(quick, sung, played, kinds_of, undescribed, played_words),
+         "",
+         "Direction: %s. %s" % (plan.label, plan.plan),
+-        _speech_rule(quick, sung, played, bool(request.strip())),
++        _speech_rule(quick, sung, played, bool(request.strip()), words, played_words),
+         "Request: %s" % (request.strip() or "(none - build the video from the pictures and the direction)"),
+     ]
+     if found:
+diff --git a/ng/core/context_build.py b/ng/core/context_build.py
+index 874b68d..adbabb2 100644
+--- a/ng/core/context_build.py
++++ b/ng/core/context_build.py
+@@ -1,8 +1,9 @@
+ """Build a ContextItem from what a context node's widgets say. Shared by the nodes and by the preview endpoint, so both name things alike."""
++import json
+ import os
+ from dataclasses import replace
+ 
+-from . import fields
++from . import fields, lyrics
+ from .context import ContextItem
+ from .context_options import ContextOptions, roles
+ from .issues import SchemaError
+@@ -20,6 +21,35 @@ def widget_text(widgets, key):
+     return fields.read_str(widgets, key, "context.widgets", "")
+ 
+ 
++def widget_lyrics(widgets):
++    """An audio card's own words, stamps and language tag removed; [] without lyrics.
++
++    The card keeps its words in context_options as LRC text; these are what the AI helpers (split into shots,
++    Make H3 prompt) plan the shots from, next to the description - the one audio field beyond it that says WHAT
++    the sound says (BUG-094: on a card that does not play exactly, the default Voice or a Music style, the timed
++    path in lyrics.story_lines never sees them, and they reached no prompt at all)."""
++    try:
++        options = json.loads(widgets.get("context_options") or "{}")
++    except ValueError:
++        return []
++    text = options.get("lyrics") if isinstance(options, dict) else None
++    return lyrics.plain_lines(text) if isinstance(text, str) else []
++
++
++def card_words(entries, played=False):
++    """The audio entries' own words (BUG-094); `played` narrows them to a Lock or Copy soundtrack."""
++    words = []
++    for entry in entries:
++        widgets = entry["widgets"]
++        try:
++            usage = roles(widgets.get("usage_roles", ""), widgets.get("usage", ""))
++        except ValueError:                      # a malformed role list is the single combo (as _roles falls back)
++            usage = (widgets.get("usage", ""),)
++        if entry.get("media") == "audio" and (not played or {"lock", "copy"} & set(usage)):
++            words.extend(widget_lyrics(widgets))
++    return words
++
++
+ def _label(media, widgets, name):
+     if media == "text":
+         return name or str(widgets.get("text", "") or "")[:24].strip() or "note"
+diff --git a/ng/core/split.py b/ng/core/split.py
+index 2c5f2ef..f66467d 100644
+--- a/ng/core/split.py
++++ b/ng/core/split.py
+@@ -81,6 +81,9 @@ def split_prompt(idea, seconds, meanings, parts=(), sung=()):
+     if len(parts) > 1:
+         rules.append("The video is rendered in separate parts with hard cuts between them: %s. A shot may run across a part boundary; a cut fits best at one."
+                      % ", ".join("%s-%s s" % (_seconds(a), _seconds(b)) for a, b in parts))
++    if any(entry.get("lyrics") for entry in meanings):
++        rules.append("The lyrics an audio card carries are that sound's exact words: use them as they are, sung or "
++                     "spoken by their speaker where the card is heard.")
+     if sung:
+         rules.append("These sung lines are already placed at their times, so do NOT put them into lines; let the action follow them: %s."
+                      % "; ".join('%s-%s s "%s"' % (_seconds(a), _seconds(b), words) for a, b, _, words in sung))
+diff --git a/tests/ng/regressions/bug_094_audio_card_lyrics_reach_shot_planning.py b/tests/ng/regressions/bug_094_audio_card_lyrics_reach_shot_planning.py
+new file mode 100644
+index 0000000..a3d410f
+--- /dev/null
++++ b/tests/ng/regressions/bug_094_audio_card_lyrics_reach_shot_planning.py
+@@ -0,0 +1,140 @@
++"""BUG-094 Regression Test: an audio card's Lyrics reach the shot and part planning on every card.
++
++The Lyrics field of the H3 Context Audio node (context_options.lyrics) had exactly one consumer:
++lyrics.story_lines, which only sees cards that play exactly (Use as Lock/Copy, or a Lock/Copy clip on a
++Studio audio lane; lyrics.py::_spans). The default card - Use as Voice - and a Music style card park their
++sound as a reference far away (legacy_bridge._audio_segments FAR_AWAY), so for them the words reached
++NOTHING: not the AI's scene/shot planning (auto_direct._meanings carried only name, description, usage,
++speaker; builder._audio_line described the sound but not its words), and no render part's prompt. Filling
++the field on such a card changed nothing - the user's report.
++
++Fix (same channels every comparable audio field already uses): context_build.widget_lyrics reads the
++card's words; auto_direct._meanings carries them as "lyrics" (a Text card's "text" did this all along);
++split's lines rule names them as the exact words; builder's Sound line carries them and the speech rule
++uses them - untimed soundtrack words are written into lines by the plan (timed ones stay compiler-placed,
++as before). Workflows without lyrics see no change: empty words add no key and no rule.
++
++Run:
++    python3 tests/ng/regressions/bug_094_audio_card_lyrics_reach_shot_planning.py
++"""
++import json
++import os
++import sys
++import unittest
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++from _pack import module
++
++context_build = module("ng.core.context_build")
++auto_direct = module("ng.core.auto_direct")
++builder = module("ng.core.builder")
++split = module("ng.core.split")
++
++TIMED = "[la:English]\n[00:01.00] My master, where did you go\n[00:05.00] I wait in the hall"
++UNTIMED = "Words that no Whisper ever timed\nA second plain line"
++
++
++def audio_card(usage, lyrics_text, context_id="audio_song"):
++    options = {"schema_version": 1}
++    if lyrics_text is not None:
++        options["lyrics"] = lyrics_text
++    return {"media": "audio", "widgets": {"audio": "song.mp3", "name": "Song", "usage": usage,
++                                          "context_id": context_id,
++                                          "context_options": json.dumps(options)}}
++
++
++class WidgetLyrics(unittest.TestCase):
++    def test_the_words_survive_their_stamps_and_an_untimed_line_is_kept(self):
++        """plain_lines strips stamps and the language tag; words without times stay usable words."""
++        self.assertEqual(context_build.widget_lyrics(audio_card("voice", TIMED)["widgets"]),
++                         ["My master, where did you go", "I wait in the hall"])
++        self.assertEqual(context_build.widget_lyrics(audio_card("voice", UNTIMED)["widgets"]),
++                         ["Words that no Whisper ever timed", "A second plain line"])
++
++    def test_broken_or_empty_options_are_no_words(self):
++        """An older card with malformed context_options (BUG-030) and a card without lyrics give []."""
++        broken = {"context_options": "{ broken json"}
++        self.assertEqual(context_build.widget_lyrics(broken), [])
++        self.assertEqual(context_build.widget_lyrics({}), [])
++        self.assertEqual(context_build.widget_lyrics(audio_card("voice", None)["widgets"]), [])
++
++
++class Meanings(unittest.TestCase):
++    def test_bug_094_an_audio_card_meaning_carries_its_words(self):
++        """The card's meaning is what the AI plans the shots from; without the words a Voice or Music style
++        card reached it nameless (the report: filling Lyrics changed nothing)."""
++        meaning = auto_direct._meanings([audio_card("voice", TIMED)])[0]
++        self.assertEqual(meaning["lyrics"], ["My master, where did you go", "I wait in the hall"])
++        self.assertEqual(meaning["usage"], "voice")
++
++    def test_green_control_cards_without_lyrics_gain_no_key(self):
++        """Workflows that leave Lyrics empty must see no change: no key, no words anywhere."""
++        self.assertNotIn("lyrics", auto_direct._meanings([audio_card("voice", None)])[0])
++        self.assertNotIn("lyrics", auto_direct._meanings([audio_card("music_style", "")])[0])
++        text = {"media": "text", "widgets": {"name": "Note", "text": "a rule"}}
++        self.assertNotIn("lyrics", auto_direct._meanings([text])[0])
++
++
++class SplitPrompt(unittest.TestCase):
++    def test_bug_094_the_words_reach_the_shot_planning(self):
++        """AI: split into shots plans from the Prompt and the card meanings: the words must be in the request."""
++        prompt = auto_direct.direction_prompt("The singer calls her master.", 10.0, [audio_card("voice", TIMED)])
++        self.assertIn("My master, where did you go", prompt)
++        self.assertIn("exact words", prompt)
++
++    def test_green_control_a_card_without_lyrics_names_no_words(self):
++        prompt = auto_direct.direction_prompt("The singer calls her master.", 10.0, [audio_card("voice", None)])
++        self.assertNotIn("My master", prompt)
++        self.assertNotIn('"lyrics"', prompt)
++
++
++class PlanPrompt(unittest.TestCase):
++    def test_bug_094_untimed_soundtrack_words_are_written_into_lines(self):
++        """A Lock song whose words carry no Whisper times had none of its words placed anywhere: the plan was
++        told the words were 'not known' and to write no lines. Now it sings the card's own words."""
++        parts, sung = auto_direct.timing_hints({"shots": "", "continuity": "none"}, [audio_card("lock", UNTIMED)])
++        self.assertEqual(sung, (), "untimed words must not claim placed times")
++        prompt = builder.plan_prompt({"direction": "auto", "speech": "singing", "language": "English"},
++                                     "A singer.", 10.0, [audio_card("lock", UNTIMED)], len(parts), parts, sung)
++        self.assertIn("soundtrack's own words", prompt)
++        self.assertNotIn("whose words are not known", prompt)
++        self.assertIn("Words that no Whisper ever timed", prompt)
++
++    def test_bug_094_a_reference_cards_words_reach_the_plan(self):
++        """The default Voice card parks its sound as a reference: its words must still reach the planning."""
++        prompt = builder.plan_prompt({"direction": "auto", "speech": "singing", "language": "English"},
++                                     "A singer.", 10.0, [audio_card("voice", TIMED)])
++        self.assertIn("words carried on an audio card", prompt)
++        self.assertIn("My master, where did you go", prompt)
++
++    def test_green_control_a_soundtrack_without_words_stays_not_known(self):
++        """No lyrics: the old behaviour is kept word for word - write no lines, show the performance."""
++        prompt = builder.plan_prompt({"direction": "auto", "speech": "singing", "language": "English"},
++                                     "A singer.", 10.0, [audio_card("lock", None)])
++        self.assertIn("whose words are not known", prompt)
++        self.assertNotIn("exact words", prompt)
++
++    def test_green_control_timed_lines_stay_compiler_placed(self):
++        """With Whisper times, the plan must keep hands off the lines (the compiler places them per part):
++        the sung rule wins, and a duplicated AI line is dropped from the answer."""
++        parts, sung = auto_direct.timing_hints({"shots": "", "continuity": "none"}, [audio_card("lock", TIMED)])
++        self.assertTrue(sung, "timed lines must be placed by the compiler as before")
++        prompt = builder.plan_prompt({"direction": "auto", "speech": "singing", "language": "English"},
++                                     "A singer.", 10.0, [audio_card("lock", TIMED)], len(parts), parts, sung)
++        self.assertIn("already placed at their times", prompt)
++        answer = {"look": "a hall", "shots": [
++            {"start_s": 0, "end_s": 5, "action": "A full-body shot of the singer.", "camera": "The camera pushes in.",
++             "beats": [], "lines": [{"speaker": "", "delivery": "sings", "language": "English",
++                                     "text": "My master, where did you go"},
++                                    {"speaker": "", "delivery": "sings", "language": "English",
++                                     "text": "a line the AI invented"}]},
++            {"start_s": 5, "end_s": 10, "action": "A close-up at the door.", "camera": "The camera holds a static shot.",
++             "beats": [], "lines": []}]}
++        result = split.parse_split(answer, 10.0, [audio_card("lock", TIMED)], "", sung)
++        placed = [line["text"] for line in json.loads(result["shots"])["shots"][0]["spoken"]]
++        self.assertIn("a line the AI invented", placed)
++        self.assertFalse(any("My master" in text for text in placed), "the compiler places the timed line")
++
++
++if __name__ == "__main__":
++    unittest.main()

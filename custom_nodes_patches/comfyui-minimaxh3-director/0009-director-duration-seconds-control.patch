@@ -1,0 +1,229 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,14 @@
+ 
+ ## Unreleased
+ 
++- **The Director's length can be wired in, and the real length comes out** (2026-11-06). The H3 Director's Length
++  was a widget only: no node could feed a desired duration in, and nothing reported the length the plan actually
++  delivers - the video snaps to H3's 17k+5 frame grid, so it can differ from the request by a fraction of a second.
++  A connection-only `duration_seconds` socket now overrides the Length widget when it carries a value above zero
++  (zero, a None from a bypassed node, or an unconnected socket means the widget as before; a negative length is
++  refused by name), and a new `length_seconds` output reports the planned video's real duration in seconds - the
++  same number the plan panel shows - for video and Pictures projects alike. Existing workflows are untouched: the
++  socket adds no widget and the output lands last.
+ - **Lyrics reach the planning on every audio card** (user report, 2026-11-06). The Lyrics field fed exactly one
+   consumer, the timed placement for a song played exactly (Use as Lock or Copy, or a Lock/Copy clip on an audio
+   lane); on the default Voice card or a Music style card the words went nowhere - not into the AI's shot planning,
+diff --git a/ng/nodes/product_director_node.py b/ng/nodes/product_director_node.py
+index 91100e3..596a99b 100644
+--- a/ng/nodes/product_director_node.py
++++ b/ng/nodes/product_director_node.py
+@@ -3,6 +3,7 @@ import folder_paths
+ from comfy_api.latest import io
+ 
+ from ..adapters.director_packets import DirectorResult, RenderSettings
++from ..core import frames
+ from ..core.chunks import ContinuityPlan
+ from ..core.context import DirectorContext
+ from ..core.limits import PIN_AUDIO_DEFAULT
+@@ -37,6 +38,13 @@ class NGH3Director(io.ComfyNode):
+                          description="Plan your project: idea, reusable contexts, editable scenes and timing. Connect Result to H3 Director Output; sampling remains in the downstream graph.",
+                          inputs=[NGInputs.Input("context", display_name="context"),
+                                  *NGDirector.define_schema().inputs[:-1],
++                                 # force_input, so it is a socket, not a widget: workflows saved before it keep their
++                                 # widget values on the same inputs (test_node's positional-widget trap does not apply).
++                                 io.Float.Input("duration_seconds", default=0.0, min=0.0, max=3600.0, step=0.01, optional=True, force_input=True,
++                                                tooltip="Automation (connection-only). Desired length in SECONDS, overriding the Length "
++                                                        "widget; 0 or unconnected uses the widget. The plan snaps the video to H3's "
++                                                        "17k+5 frame grid, so the rendered length can differ by a fraction of a "
++                                                        "second — the exact value is on the length_seconds output."),
+                                  io.Combo.Input("style", options=["None", "Cinematic", "Anime", "Documentary", "Photorealistic"], default="None"),
+                                  io.String.Input("prompt_override", multiline=True, default="", optional=True, advanced=True), *sampling_inputs(),
+                                  *turbo_inputs(),
+@@ -64,7 +72,12 @@ class NGH3Director(io.ComfyNode):
+                                  io.Boolean.Input("spectrum", default=False, optional=True, advanced=True,
+                                                   tooltip="With Turbo off: the Spectrum pack forecasts some sampling steps (about a third "
+                                                           "faster at 20 steps). Needs ComfyUI-Spectrum-MiniMax-H3 installed.")],
+-                         outputs=[NGResult.Output(display_name="result"), NGChunk.Output(display_name="chunks", is_output_list=True)])
++                         outputs=[NGResult.Output(display_name="result"), NGChunk.Output(display_name="chunks", is_output_list=True),
++                                  # appended last: existing workflows keep their output slots
++                                  io.Float.Output("length_seconds", display_name="length_seconds",
++                                                  tooltip="The video's real length in seconds after the plan snapped it to H3's "
++                                                          "17k+5 frame grid (24 fps). Wire it where the downstream timing has to "
++                                                          "match what is actually rendered.")])
+ 
+     @classmethod
+     def validate_inputs(cls, turbo_lora_fl2va="none", turbo_lora_ref2va="none"):
+@@ -77,7 +90,21 @@ class NGH3Director(io.ComfyNode):
+     def execute(cls, context, **values):
+         text_inputs = {name: "" if values.get(name) is None else values[name]
+                        for name in ("prepend_text", "prompt_override")}
+-        director = DirectorContext(idea=values["idea"], project_seconds=values["project_seconds"],
++        # An automation socket has no minimum, and 0 is what an upstream node hands over when
++        # its own value was never set; a negative length is refused by name, 0 falls back to
++        # the Length widget. Same hazard and same handling as the legacy Director's
++        # start/end/duration sockets.
++        project_seconds = float(values["project_seconds"])
++        if values.get("duration_seconds") is not None:
++            external_seconds = float(values["duration_seconds"])
++            if external_seconds < 0:
++                raise ValueError("H3 Director: the connected 'duration_seconds' is %.3gs. It is a length in "
++                                 "seconds and cannot be negative. Check the node feeding it — a value that "
++                                 "was never set arrives here as 0, which means use the Length widget."
++                                 % external_seconds)
++            if external_seconds > 0:
++                project_seconds = external_seconds
++        director = DirectorContext(idea=values["idea"], project_seconds=project_seconds,
+                                    width=values["width"], height=values["height"], mode=values["mode"],
+                                    shots_text=values["shots"], soundscape=values["soundscape"], music=values["music"],
+                                    items=context.contexts, style=values.get("style", ""), **text_inputs)
+@@ -89,7 +116,9 @@ class NGH3Director(io.ComfyNode):
+         else:
+             project = plan_project(director, values["chunk_seconds"], continuity, image_size)
+         settings = RenderSettings(**{name: values[name] for name in RenderSettings.__dataclass_fields__ if name in values})
+-        return io.NodeOutput(DirectorResult(context, project, settings), jobs(project))
++        # the video's real length: the grid the chunks landed on, not the widget's request
++        length_seconds = frames.frames_to_seconds(project.plan.total_frames)
++        return io.NodeOutput(DirectorResult(context, project, settings), jobs(project), length_seconds)
+ 
+ 
+ NODES = [NGH3Director]
+diff --git a/tests/ng/regressions/bug_091_duration_seconds_output.py b/tests/ng/regressions/bug_091_duration_seconds_output.py
+new file mode 100644
+index 0000000..0306765
+--- /dev/null
++++ b/tests/ng/regressions/bug_091_duration_seconds_output.py
+@@ -0,0 +1,96 @@
++"""Regression test: the H3 Director's external duration control and adapted-length output.
++
++What happens (Ist):
++NGH3Director had no way to feed a desired video length in from another node and no way to read
++the real length back — the length the planner actually delivers after snapping to H3's 17k+5
++frame grid (GRID_STEP 17, GRID_OFFSET 5, 24 fps) can differ from the Length widget by a
++fraction of a second.
++
++Expected:
++1. `duration_seconds` is an optional connection-only input; when connected and > 0 it overrides
++   the `project_seconds` widget. 0 or an omitted socket keeps the widget's value (a value that
++   was never set arrives as 0). A negative length is refused with a ValueError naming the input.
++2. `length_seconds` is the last output and equals the planned total frames divided by 24 —
++   the same number the plan panel reports — for both the widget path and the socket path.
++"""
++import os
++import sys
++import unittest
++
++HERE = os.path.dirname(os.path.abspath(__file__))
++NG_TESTS = os.path.dirname(HERE)
++if NG_TESTS not in sys.path:
++    sys.path.insert(0, NG_TESTS)
++
++from _pack import comfy_available, load_full_pack, module
++
++frames = module("ng.core.frames")
++
++
++def run_director(kwargs):
++    pack = load_full_pack()
++    nodes = pack.NODE_CLASS_MAPPINGS
++    provider = nodes["NGAIProvider"].execute(
++        source="local", provider="custom", base_url="http://127.0.0.1:18319",
++        model="mock", api_key_env="", vision=True, audio=False,
++        timeout_seconds=90, max_tokens=256, keep_alive=30, clip=["clip", 0]
++    ).args[0]
++    text = nodes["NGContextText"].execute(
++        text="Slow camera.", name="Camera", description="",
++        content="rules", usage="rule", preserve="high"
++    ).args[0]
++    context = nodes["NGContextConnector"].execute(
++        clip=["clip", 0], vae=["vae", 0], audio_vae=["audio", 0],
++        model_fl2va=["fl", 0], model_ref2va=["ref", 0], ai_provider=provider,
++        context_text={"text_0": text}
++    ).args[0]
++    base = dict(context=context, idea="A baker opens a shop.", shots="",
++                project_seconds=8.0, chunk_seconds=5.0, width=384, height=576,
++                mode="auto", continuity="video_audio", pin_frames="22",
++                soundscape="Wind", music="N/A")
++    base.update(kwargs)
++    return nodes["NGH3Director"].execute(**base)
++
++
++@unittest.skipUnless(comfy_available(), "ComfyUI is not importable")
++class TestBug091DurationSeconds(unittest.TestCase):
++
++    def test_schema_has_input_and_last_output(self):
++        schema = load_full_pack().NODE_CLASS_MAPPINGS["NGH3Director"].define_schema()
++        self.assertIn("duration_seconds", [i.id for i in schema.inputs])
++        self.assertEqual([o.id for o in schema.outputs][-1], "length_seconds")
++        duration = next(i for i in schema.inputs if i.id == "duration_seconds")
++        self.assertTrue(duration.optional)
++
++    def test_connected_duration_overrides_widget(self):
++        output = run_director({"duration_seconds": 12.0})
++        length_seconds = output.args[2]
++        total_frames = round(length_seconds * frames.FPS)
++        # the plan delivers the grid length nearest 12s: within one grid step, on the grid
++        self.assertLessEqual(abs(total_frames - int(round(12.0 * frames.FPS))), frames.GRID_STEP)
++        self.assertTrue(frames.on_grid(total_frames))
++
++    def test_zero_falls_back_to_widget(self):
++        with_socket = run_director({"duration_seconds": 0.0})
++        without = run_director({})
++        self.assertEqual(with_socket.args[2], without.args[2])
++
++    def test_negative_is_refused(self):
++        with self.assertRaises(ValueError):
++            run_director({"duration_seconds": -3.0})
++
++    def test_output_matches_planned_frames(self):
++        output = run_director({})
++        plan = module("ng.core.project")
++        ctx_mod = module("ng.core.context")
++        chunk_mod = module("ng.core.chunks")
++        ctx = ctx_mod.DirectorContext(idea="A baker opens a shop.", project_seconds=8.0,
++                                      width=384, height=576, mode="auto", shots_text="",
++                                      soundscape="Wind", music="N/A")
++        continuity = chunk_mod.ContinuityPlan(mode="video_audio", video_frames=22, audio_frames=176)
++        project = plan.plan_project(ctx, 5.0, continuity, None)
++        self.assertEqual(output.args[2], frames.frames_to_seconds(project.plan.total_frames))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/ng/test_external_sampling.py b/tests/ng/test_external_sampling.py
+index 93a3f25..4f2eb07 100644
+--- a/tests/ng/test_external_sampling.py
++++ b/tests/ng/test_external_sampling.py
+@@ -43,13 +43,15 @@ class ExternalSampling(unittest.TestCase):
+ 
+     def test_director_provides_the_whole_list_without_evaluating_model_links(self):
+         director = self.director()
+-        result, chunks = director.args
++        result, chunks, length_seconds = director.args
+         out = self.nodes["NGDirectorOutput"].execute(result)
+         self.assertIs(out.args[8], result)
+         self.assertEqual([job.index for job in chunks], [0, 1, 2])
+         self.assertTrue(all(job.project is result.project for job in chunks))
+         self.assertEqual(result.inputs.model_fl2va, ["fl", 0])
+         self.assertIsNone(director.expand)
++        # the real delivered length: 12s asked, the grid the parts landed on answered
++        self.assertGreater(length_seconds, 0)
+         self.assertTrue(self.nodes["NGH3Director"].GET_SCHEMA().outputs[1].is_output_list)
+ 
+     def test_the_directors_sampling_settings_reach_an_external_sampler(self):
+diff --git a/tests/ng/test_product_nodes.py b/tests/ng/test_product_nodes.py
+index fe6623c..230cadc 100644
+--- a/tests/ng/test_product_nodes.py
++++ b/tests/ng/test_product_nodes.py
+@@ -55,7 +55,8 @@ class ProductNodes(unittest.TestCase):
+         self.assertEqual(inputs["vae"].io_type, "VAE")
+         self.assertEqual(inputs["ai_provider"].io_type, "NG_AI_PROVIDER")
+         director_outputs = self.nodes["NGH3Director"].GET_SCHEMA().outputs
+-        self.assertEqual([value.io_type for value in director_outputs], ["NG_DIRECTOR_RESULT", "NG_CHUNK"])
++        self.assertEqual([value.io_type for value in director_outputs], ["NG_DIRECTOR_RESULT", "NG_CHUNK", "FLOAT"])
++        self.assertEqual(director_outputs[-1].id, "length_seconds")
+         self.assertTrue(director_outputs[1].is_output_list)
+         outputs = self.nodes["NGDirectorOutput"].GET_SCHEMA().outputs
+         from comfy.samplers import KSampler

@@ -155,6 +155,8 @@ url = "https://github.com/WASasquatch/was-node-suite-comfyui.git"
 ref = "main"
 # .docx/.odt/.pdf export on Save (python-docx, odfdo, xhtml2pdf); vector_stores stays opt-in.
 extras = ["document_export", "llm"]
+patches = ["0001-web-fetches-honor-base-path.patch"]
+patches_base = "408ed3a16fb78968f89e511995236bc15e4be962"
 
 [nodes.comfyui-minimaxh3-director]
 url = "https://github.com/seesee75-commits/ComfyUI-MiniMaxH3-Director"
@@ -166,6 +168,12 @@ patches = [
   "0004-ai-loader-max-tokens-thinking-budget.patch",
   "0005-flat-taeh3-preview-decoder.patch",
   "0006-whisper-model-discovery.patch",
+  "0007-ai-requests-abort-on-cancel.patch",
+  "0008-audio-card-lyrics-reach-shot-planning.patch",
+  "0009-director-duration-seconds-control.patch",
+  "0010-cenhance-cancel-unload-and-duration-message.patch",
+  "0011-ai-routes-cancel-on-client-disconnect.patch",
+  "0012-lyric-stamps-reach-planning-prompts.patch",
 ]
 patches_base = "6664d75f459d06a9672ac8fbf28ffec59fbaf71a"
 
