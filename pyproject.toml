@@ -84,23 +84,29 @@ dependencies = [
 ]
 
 "cuda" = [
-  # CUDA wheels for linux x86_64 only, same gate as rocm; other platforms keep the PyPI
+  # CUDA wheels for linux x86_64 and Windows; other platforms keep the PyPI
   # torch (default CUDA build). Deliberately newer than the rocm pair: AMD's index has no
   # 2.14.1/0.29.1 rocm10 builds, so the rocm extra pins 2.14.0+rocm10.1.0/0.29.0a0 while cuda
   # stays on 2.14.1+cu130/0.29.1+cu130; the rocm/cuda conflicts entry keeps the forks apart.
   # torch 2.14.1 requires triton~=3.8.0, which PyPI serves for cp314.
-  "torch==2.14.1+cu130; sys_platform == 'linux' and platform_machine == 'x86_64'",
-  "torchvision==0.29.1+cu130; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torch==2.14.1+cu130; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
+  "torchvision==0.29.1+cu130; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
   "triton>=3.8.0,<3.9; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+"cpu" = [
+  # CPU-only torch from PyTorch's own cpu index; the index carries this cp314
+  # manylinux wheel. Linux x86_64 only — other platforms keep the PyPI torch.
+  "torch==2.14.1+cpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 "manager" = ["comfyui_manager>=4.2.2"]
 
 # ONNX runtime backends. Exactly one of these may be enabled at a time: all three
 # distributions ship the same `onnxruntime` module, so two installed together
-# shadow each other. Always sync with your hardware extra (--extra rocm or
-# --extra cuda) alongside the backend extra so the resolver keeps matching torch
-# wheels; the two hardware extras are mutually exclusive and cannot be combined.
+# shadow each other. Always sync with your hardware extra (--extra rocm,
+# --extra cuda, or --extra cpu) alongside the backend extra so the resolver keeps matching
+# torch wheels; the hardware extras are mutually exclusive and cannot be combined.
 "onnx-cpu" = ["onnx", "onnxruntime"]
 "onnx-rocm" = ["onnx", "onnxruntime-rocm"]
 "onnx-gpu" = ["onnx", "onnxruntime-gpu"]
@@ -196,14 +202,22 @@ index-strategy = "unsafe-best-match"
 # conflicting forks the lock and makes `uv sync --extra rocm --extra cuda` fail loudly
 # instead of silently picking one index.
 conflicts = [
-  [{ extra = "rocm" }, { extra = "cuda" }],
+  [{ extra = "rocm" }, { extra = "cuda" }, { extra = "cpu" }],
+
+  [{ extra = "onnx-cpu" }, { extra = "onnx-gpu" }, { extra = "onnx-rocm" }],
 ]
 
 # was-ns declares `opencv-python-headless[ffmpeg]`, an extra opencv has never published;
 # uv warns on every re-resolution. The wheel ships FFMPEG: YES regardless, so the extra
 # is dropped here instead of patching the node, which is a gitignored clone.
 override-dependencies = ["opencv-python-headless"]
+  [{ extra = "onnx-cpu" }, { extra = "onnx-gpu" }, { extra = "onnx-rocm" }],
+]
 
+# was-ns declares `opencv-python-headless[ffmpeg]`, an extra opencv has never published;
+# uv warns on every re-resolution. The wheel ships FFMPEG: YES regardless, so the extra
+# is dropped here instead of patching the node, which is a gitignored clone.
+override-dependencies = ["opencv-python-headless"]
 [tool.uv.workspace]
 # Custom nodes are plain git clones (gitignored), but each ships a pyproject.toml
 # with [project] name+version, so uv can resolve their dependencies into the same
@@ -223,11 +237,12 @@ exclude = ["custom_nodes/comfyui-impact-pack"]
 # these entries applies per fork.
 torch = [
   { index = "amd-rocm", extra = "rocm", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-  { index = "torch-cuda", extra = "cuda", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "torch-cuda", extra = "cuda", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')" },
+  { index = "torch-cpu", extra = "cpu", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
 ]
 torchvision = [
   { index = "amd-rocm", extra = "rocm", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
-  { index = "torch-cuda", extra = "cuda", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "torch-cuda", extra = "cuda", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')" },
 ]
 # AMD ships its triton build under the plain `triton` name; the rocm extra lists triton
 # directly so this extra-scoped source applies (InvokeAI's pattern). Only the rocm fork
@@ -257,6 +272,11 @@ url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [[tool.uv.index]]
+name = "torch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
 name = "amd-rocm"
 url = "https://stable.repo.amd.com/rocm/whl-next/"
 # explicit: the index mirrors common PyPI packages (numpy, sympy, pillow, filelock,
@@ -264,7 +284,6 @@ url = "https://stable.repo.amd.com/rocm/whl-next/"
 # and with index-strategy = "unsafe-best-match" a non-explicit index could capture the
 # resolution of anything it hosts. Same rule InvokeAI applies to this index.
 explicit = true
-
 [[tool.uv.dependency-metadata]]
 # `rocm` is published only as an sdist whose build asks the machine's GPU which kernel
 # package to require, so the lock would depend on the machine that wrote it. Static

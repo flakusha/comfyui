@@ -20,6 +20,7 @@ pyproject.toml conflict -> merge hunks BY HAND, never a wholesale side; runbook:
 rollback: mid-rebase -> git rebase --abort ; after -> git reset --hard refs/pre-rebase-backup
   (on local; the ref is kept until gates pass, then deleted)
   env: git checkout uv.lock && uv sync --inexact --extra rocm --extra manager --extra dev --python .venv/bin/python
+  (uv.lock is tracked, so the checkout restores its committed state)
 --inexact required: bare uv sync removes custom-node packages
 out-of-band venv installs (uv pip install ...) are silently reverted by the sync; the
   updater prints a drift note before syncing (Python port only; no shell counterpart)
@@ -69,7 +70,7 @@ BACKUP_REF = "refs/pre-rebase-backup"
 BASE_EXTRAS: tuple[str, ...] = ("rocm", "manager", "dev")
 # torch resolves through conflicting uv forks (pyproject [tool.uv].conflicts);
 # both extras together can never sync.
-HARDWARE_EXTRAS = frozenset({"rocm", "cuda"})
+HARDWARE_EXTRAS = frozenset({"rocm", "cuda", "cpu"})
 REQUIREMENTS_TXT = REPO_ROOT / "requirements.txt"
 PYPROJECT_TOML = REPO_ROOT / "pyproject.toml"
 CUSTOM_NODES_DEPS = REPO_ROOT / "scripts" / "custom_nodes_deps.py"
