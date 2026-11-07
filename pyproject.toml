@@ -42,6 +42,11 @@ dependencies = [
   "PyOpenGL>=3.1.8",
   "comfy-angle",
   "openai-whisper",
+  # GGUF runtime support for the GGUF loader node packs (models/unet_gguf etc).
+  # ComfyUI-GGUF-Loader declares no [project.dependencies], and city96's
+  # ComfyUI-GGUF (previously the lock's sole gguf provider) was removed from the
+  # workspace, so the dependency is declared here to keep uv sync installing it.
+  "gguf>=0.13.0",
 ]
 
 [project.optional-dependencies]
@@ -211,13 +216,6 @@ conflicts = [
 # uv warns on every re-resolution. The wheel ships FFMPEG: YES regardless, so the extra
 # is dropped here instead of patching the node, which is a gitignored clone.
 override-dependencies = ["opencv-python-headless"]
-  [{ extra = "onnx-cpu" }, { extra = "onnx-gpu" }, { extra = "onnx-rocm" }],
-]
-
-# was-ns declares `opencv-python-headless[ffmpeg]`, an extra opencv has never published;
-# uv warns on every re-resolution. The wheel ships FFMPEG: YES regardless, so the extra
-# is dropped here instead of patching the node, which is a gitignored clone.
-override-dependencies = ["opencv-python-headless"]
 [tool.uv.workspace]
 # Custom nodes are plain git clones (gitignored), but each ships a pyproject.toml
 # with [project] name+version, so uv can resolve their dependencies into the same
@@ -228,7 +226,14 @@ members = ["custom_nodes/*"]
 # impact-pack declares `sam2 @ git+...` while the package's metadata name is
 # `sam-2`; uv refuses that mismatch at lock time, so this node stays out of the
 # workspace and is installed by hand instead.
-exclude = ["custom_nodes/comfyui-impact-pack"]
+exclude = [
+  "custom_nodes/comfyui-impact-pack",
+  # city96's ComfyUI-GGUF removed from the dependency set: dormant since
+  # 2026-01-12 and a strict subset of the active ComfyUI-GGUF-Loader fork
+  # (same node keys, fork wins by load order). Directory stays on disk;
+  # exclusion just keeps uv from resolving it into the lock.
+  "custom_nodes/ComfyUI-GGUF",
+]
 
 [tool.uv.sources]
 # Each package gets one source per GPU extra, discriminated by `extra`; a plain `uv lock`
@@ -296,3 +301,4 @@ requires-dist = [
   "rocm-sdk-libraries==10.1.0; extra == 'libraries'",
 ]
 provides-extras = ["libraries"]
+
