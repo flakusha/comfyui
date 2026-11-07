@@ -168,7 +168,7 @@ url = "https://github.com/flakusha/ComfyUI-MiniMaxH3-Director.git"
 # commits + gguf encoder support) is hash-pinned so sync resolves the exact
 # commit against the fetched object store and never fast-forwards or refuses
 # on divergence; update the pin after new commits.
-ref = "f13183c34e48a083467792f74ef2c5a76b63c382"
+ref = "local"
 
 [nodes.comfyui-speed-sampler]
 url = "https://github.com/StanLukuvka/ComfyUI-SPEED-Sampler.git"
