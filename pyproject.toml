@@ -120,6 +120,20 @@ dependencies = [
 # v2+ requires an nvcc/CUDA toolchain so is deliberately excluded.
 "sage" = ["sageattention==1.0.6"]
 
+# llama-cpp-python GPU flavor selector for the GGUF node packs (was `LLM GGUF
+# Loader`, DaSiWa `llama_cpp` backend). The lock carries the PyPI sdist — no
+# Linux wheels exist — so every sync compiles it CPU-only regardless of extra.
+# Each flavor resolves the same locked version (a marker, not a different
+# binary); scripts/rebuild_llama_cpp_vulkan.py compiles the selected flavor
+# after the sync. Exactly one may be enabled at a time; default (none) is
+# the lock's CPU build. llama-* never conflicts with torch's rocm/cuda/cpu
+# extras: `rocm` there is a pip wheel runtime, while `llama-rocm` needs the
+# hipcc compiler, which this box lacks — the flavors only share a name.
+"llama-vulkan" = ["llama-cpp-python>=0.3.26; sys_platform == 'linux' and platform_machine == 'x86_64'"]
+"llama-cuda" = ["llama-cpp-python>=0.3.26; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')"]
+"llama-rocm" = ["llama-cpp-python>=0.3.26; sys_platform == 'linux' and platform_machine == 'x86_64'"]
+"llama-cpu" = ["llama-cpp-python>=0.3.26"]
+
 # Mirrors tests-unit/requirements.txt (upstream-canonical source, left untouched).
 "dev" = ["pytest>=7.8.0", "pytest-aiohttp", "pytest-asyncio", "websocket-client", "cryptography", "ruff"]
 [project.urls]
@@ -146,6 +160,7 @@ exclude = ["*.ipynb", "**/generated/*.pyi"]
 
 # Fork CLI scripts: their prints are their output contract, not debug noise.
 [tool.ruff.lint.per-file-ignores]
+"scripts/rebuild_llama_cpp_vulkan.py" = ["T201"]
 "scripts/custom_nodes_deps.py" = ["T201"]
 "scripts/local_common.py" = ["T201"]
 "scripts/update_local.py" = ["T201"]
@@ -210,6 +225,8 @@ conflicts = [
   [{ extra = "rocm" }, { extra = "cuda" }, { extra = "cpu" }],
 
   [{ extra = "onnx-cpu" }, { extra = "onnx-gpu" }, { extra = "onnx-rocm" }],
+
+  [{ extra = "llama-vulkan" }, { extra = "llama-cuda" }, { extra = "llama-rocm" }, { extra = "llama-cpu" }],
 ]
 
 # was-ns declares `opencv-python-headless[ffmpeg]`, an extra opencv has never published;
@@ -301,4 +318,3 @@ requires-dist = [
   "rocm-sdk-libraries==10.1.0; extra == 'libraries'",
 ]
 provides-extras = ["libraries"]
-

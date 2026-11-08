@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Local updater: fetch upstream master (FF-only) -> guarded mirror to origin/master -> rebase
 the patch stack onto master -> uv sync (rocm + manager + dev) -> custom-node manifest
-sync (pinned refs; a refusal aborts the run) -> custom-node deps -> gates.
+sync (pinned refs; a refusal aborts the run) -> custom-node deps -> llama-cpp
+Vulkan rebuild (step 5b; best-effort, never aborts) -> gates.
 
 runbook
 routine: python scripts/update_local.py
@@ -71,6 +72,11 @@ BASE_EXTRAS: tuple[str, ...] = ("rocm", "manager", "dev")
 # torch resolves through conflicting uv forks (pyproject [tool.uv].conflicts);
 # both extras together can never sync.
 HARDWARE_EXTRAS = frozenset({"rocm", "cuda", "cpu"})
+# llama-cpp-python GPU flavor selector (pyproject llama-* extras): exactly one
+# flavor extra per sync, same exclusivity rule as the torch hardware extras.
+# Independent of HARDWARE_EXTRAS — `llama-rocm` (hipcc source build) never
+# conflicts with torch's `rocm` (pip wheel runtime) at resolve time.
+LLAMA_EXTRAS = frozenset({"llama-vulkan", "llama-cuda", "llama-rocm", "llama-cpu"})
 REQUIREMENTS_TXT = REPO_ROOT / "requirements.txt"
 PYPROJECT_TOML = REPO_ROOT / "pyproject.toml"
 CUSTOM_NODES_DEPS = REPO_ROOT / "scripts" / "custom_nodes_deps.py"
@@ -145,6 +151,8 @@ def parse_args(argv: list[str] | None = None) -> Options:
     extras = tuple(args.extra)
     if sum(name in HARDWARE_EXTRAS for name in extras) > 1:
         parser.error("--extra rocm, --extra cuda, and --extra cpu are mutually exclusive")
+    if sum(name in LLAMA_EXTRAS for name in extras) > 1:
+        parser.error("--extra llama-vulkan, --extra llama-cuda, --extra llama-rocm, and --extra llama-cpu are mutually exclusive")
     return Options(
         mirror="yes" if args.mirror else "no" if args.no_mirror else "ask",
         force=args.force,
@@ -699,6 +707,19 @@ def main(argv: list[str] | None = None) -> int:
         )
     print("=== custom node dependencies ===")
     run_quietly([str(venv_python()), str(CUSTOM_NODES_DEPS), "install"])
+
+    # 5b. llama-cpp-python GPU rebuild: the lock carries the PyPI sdist (no
+    # Linux wheels), so every sync compiles it CPU-only and WAS `LLM GGUF
+    # Loader` silently forces gpu_layers=0. Rebuild the SAME locked version
+    # with the flavor's CMAKE_ARGS; the script no-ops when offload already
+    # works, and refuses flavors whose compiler is missing (notably
+    # llama-rocm: this box has no hipcc, only the torch rocm wheel runtime).
+    # Best-effort by design (a failed native build must not abort an
+    # otherwise good update) — start_local's audit only checks the version.
+    llama = next((name for name in opts.extras if name in LLAMA_EXTRAS), "")
+    flavor = llama.removeprefix("llama-") if llama else "vulkan"
+    print(f"=== llama-cpp-python [{flavor}] ===")
+    run_quietly([str(venv_python()), str(REPO_ROOT / "scripts" / "rebuild_llama_cpp_vulkan.py"), "--flavor", flavor])
 
     # 6. post-bump gates
     if opts.gates:
