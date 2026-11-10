@@ -56,8 +56,11 @@
 #        `python scripts/custom_nodes_deps.py sync --stamp-patches-base
 #        <node>` settles the node at its pinned ref with the stack applied
 #        and stamps the resolved SHA here (re-run it after moving a ref to
-#        re-stamp deliberately). At sync time a base that differs from the
-#        resolved ref is a WARNING naming both SHAs — drift is expected
+#        re-stamp deliberately). A plain `sync` also auto-stamps after a
+#        successful apply, unless the recorded base is a real SHA and the
+#        upstream move touched a patched file — that case keeps the manual
+#        review cycle with a WARNING naming the files to diff. At sync time
+#        a base that differs from the resolved ref is a WARNING naming both SHAs — drift is expected
 #        (patches apply fine across nearby commits; git apply validates the
 #        hunks against whatever tree they land on) — never a refusal; the
 #        base exists so a future ref move starts from a known-good point

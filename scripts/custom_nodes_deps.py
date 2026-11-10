@@ -36,6 +36,7 @@ import argparse
 import hashlib
 import json
 import os
+import py_compile
 import re
 import subprocess
 import sys
@@ -761,6 +762,39 @@ def _patch_new_files(patch: Path) -> list[str]:
     ]
 
 
+def _patch_paths(files: list[Path]) -> set[str]:
+    """Repo-relative paths a patch stack touches, from its ---/+++ headers."""
+    paths = set()
+    for f in files:
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if line.startswith("--- a/") or line.startswith("+++ b/"):
+                paths.add(line[6:])
+    return paths
+
+
+def _stack_applies(repo: Path, files: list[Path]) -> str | None:
+    """Simulate the whole stack on a temp index seeded from HEAD, touching
+    nothing; the first failing patch's name + stderr, or None when every
+    patch applies. `apply --cached` stages a patch's created files itself,
+    so no worktree pre-staging is needed (unlike the unwind in
+    _patches_applied, which starts from a dirty worktree)."""
+    with tempfile.NamedTemporaryFile(suffix=".index") as idx:
+        env = {**os.environ, "GIT_INDEX_FILE": idx.name}
+        if not _git_env_rc(repo, env, "read-tree", "HEAD"):
+            return "could not seed a temp index from HEAD"
+        for f in files:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "apply", "--cached", str(f)],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout).strip()
+                return f"{f.name}: {detail}"
+    return None
+
+
 def _patches_applied(repo: Path, files: list[Path]) -> bool:
     """True when the worktree diff is exactly the declared patch stack on top
     of HEAD, i.e. the whole stack unwinds back to the pinned ref's tree."""
@@ -792,6 +826,8 @@ def apply_patches(repo: Path, name: str, files: list[Path]) -> str | None:
     trivially regenerated and never needing commit identity. On every sync
     the worktree must look like either the clean pinned ref or the ref with
     the full stack applied — anything else is a refusal, never discarded.
+    A stack that would fail partway is refused before the first hunk lands
+    (temp-index dry-run), so a refusal never leaves a half-applied stack.
     """
     if _git_out(repo, "diff", "HEAD"):
         if _patches_applied(repo, files):
@@ -801,6 +837,9 @@ def apply_patches(repo: Path, name: str, files: list[Path]) -> str | None:
             "dirty worktree changes are not explained by the declared patches; "
             "commit/stash them, or reset to the pinned ref and re-run"
         )
+    err = _stack_applies(repo, files)
+    if err:
+        return f"patch stack failed dry-run at {err}; worktree untouched"
     for f in files:
         proc = subprocess.run(
             ["git", "-C", str(repo), "apply", str(f)], capture_output=True, text=True
@@ -808,6 +847,38 @@ def apply_patches(repo: Path, name: str, files: list[Path]) -> str | None:
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip()
             return f"patch failed to apply: {f.name}: {detail}"
+    for path in sorted(_patch_paths(files)):
+        if not path.endswith(".py") or not (repo / path).is_file():
+            continue
+        try:
+            py_compile.compile(str(repo / path), doraise=True)
+        except py_compile.PyCompileError as e:
+            # the stack landed on a clean worktree: reset undoes the tracked
+            # edits; clean also removes files this stack created (a reset
+            # leaves those untracked) and any __pycache__ the compile check
+            # wrote, so the refusal leaves exactly the pinned ref's tree
+            _git_run(repo, "reset", "--hard", "HEAD")
+            stale = [
+                p for f in files for p in _patch_new_files(f) if (repo / p).exists()
+            ]
+            stale += sorted(
+                str(d.relative_to(repo))
+                for d in {(repo / p).parent / "__pycache__" for p in _patch_paths(files)}
+                if d.is_dir()
+            )
+            note = ""
+            if stale:
+                subprocess.run(
+                    ["git", "-C", str(repo), "clean", "-fd", "--", *stale],
+                    capture_output=True,
+                )
+                removed = [p for p in stale if not (repo / p).exists()]
+                note = (
+                    f"; removed {', '.join(removed)}"
+                    if removed
+                    else f"; {', '.join(stale)} still present in the worktree"
+                )
+            return f"patched file failed to compile: {path}: {e}{note}"
     print(f"{name}: applied {len(files)} patch(es)")
     return None
 
@@ -829,6 +900,60 @@ def warn_base_drift(name: str, pin: NodePin, target: str) -> None:
         f"{name}: WARNING: patches_base {base} differs from resolved ref {target} "
         f"— patch stack last known-good on {base}; re-stamp with "
         f"--stamp-patches-base once verified on {target}",
+        file=sys.stderr,
+    )
+
+
+def _auto_stamp(
+    name: str,
+    pin: NodePin,
+    repo: Path,
+    target: str,
+    files: list[Path],
+    stamps: dict[str, str],
+) -> None:
+    """Decide whether a successful apply at `target` may record `target` as
+    the node's patches_base. Without a usable base there is nothing to
+    review against, so stamp. With a real base, stamp only when the
+    upstream move leaves every patch-touched file untouched; otherwise keep
+    the manual review cycle and name the evidence. Sync-only: the
+    --stamp-patches-base command stamps unconditionally instead."""
+    base = pin.patches_base
+    if not base or base == "unknown":
+        stamps[name] = target
+        return
+    if base == target:
+        return  # already stamped at this hash; nothing to record
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--name-only", base, target],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        # an unreachable base proves nothing about the move; keep the manual
+        # cycle instead of stamping on missing evidence
+        print(
+            f"{name}: WARNING: patches_base {base} is not reachable in this "
+            f"clone, so the upstream move to {target} cannot be checked "
+            f"against the patched files — re-stamp with --stamp-patches-base "
+            f"{name} once reviewed",
+            file=sys.stderr,
+        )
+        return
+    touched = _patch_paths(files) & set(proc.stdout.split())
+    if not touched:
+        stamps[name] = target
+        print(
+            f"{name}: auto-stamped patches_base={target} (upstream {base}..{target} "
+            "leaves patched files untouched)"
+        )
+        return
+    listing = ", ".join(sorted(touched))
+    print(
+        f"{name}: WARNING: patches_base {base} differs from resolved ref {target} "
+        f"and upstream touched patched file(s): {listing} — review with "
+        f"git -C custom_nodes/{name} diff {base}..{target} -- {listing}; then "
+        f"re-stamp with --stamp-patches-base {name}",
         file=sys.stderr,
     )
 
@@ -944,6 +1069,7 @@ def sync_node(
     *,
     dry_run: bool = False,
     refusals: set[str] | None = None,
+    stamps: dict[str, str] | None = None,
 ) -> str | None:
     """Converge one manifest node; returns its resolved hash or None.
 
@@ -953,7 +1079,9 @@ def sync_node(
     A node declaring patches must additionally end at ref + stack: the
     worktree has to match either the clean ref or the ref with every patch
     applied — anything else refuses; a matching stack resets before a ref
-    move and is re-applied after convergence.
+    move and is re-applied after convergence. When `stamps` is given (plain
+    sync, not --stamp-patches-base), a successful apply at a ref the
+    recorded patches_base doesn't name adds a stamp decision via _auto_stamp.
     """
     repo = CUSTOM_NODES_DIR / name
 
@@ -997,13 +1125,14 @@ def sync_node(
         state = repo_state(repo, target=target, branch=branch)
         plan = plan_sync(state, target, branch)
         if plan.verb == "ok":
-            warn_base_drift(name, pin, target)
             if pin.patches:
                 if dry_run:
+                    warn_base_drift(name, pin, target)
                     print(f"{name}: would apply {len(pin.patches)} patch(es)")
                     return None
                 try:
-                    err = apply_patches(repo, name, _patch_files(name, pin))
+                    patch_files = _patch_files(name, pin)
+                    err = apply_patches(repo, name, patch_files)
                 except SyncError as e:
                     err = str(e)
                 if err:
@@ -1011,6 +1140,10 @@ def sync_node(
                     if refusals is not None:
                         refusals.add(name)
                     return None
+                if stamps is not None:
+                    _auto_stamp(name, pin, repo, target, patch_files, stamps)
+                else:
+                    warn_base_drift(name, pin, target)
             if did:
                 print(f"{name}: {' + '.join(did)} -> {target} (ref {pin.ref})")
             else:
@@ -1093,6 +1226,7 @@ def run_sync_manifest(manifest: Path, dry_run: bool = False) -> int:
     except FileNotFoundError:
         print(f"ERROR: manifest not found: {manifest}", file=sys.stderr)
         return 1
+    original_text = text
     try:
         pins = parse_manifest(text)
     except (tomllib.TOMLDecodeError, ValueError) as e:
@@ -1101,11 +1235,41 @@ def run_sync_manifest(manifest: Path, dry_run: bool = False) -> int:
 
     resolved: dict[str, str] = {}
     refusals: set[str] = set()
+    stamps: dict[str, str] = {}
     for name in sorted(pins):
-        hash_ = sync_node(name, pins[name], dry_run=dry_run, refusals=refusals)
+        hash_ = sync_node(
+            name, pins[name], dry_run=dry_run, refusals=refusals, stamps=stamps
+        )
         if hash_:
             resolved[name] = hash_
     failed = sorted(refusals)
+
+    if stamps and not dry_run and not failed:
+        # auto-stamps from settled nodes, written with the same
+        # stamp -> re-validate -> single-write sequence as --stamp-patches-base
+        for name, sha in sorted(stamps.items()):
+            new_text, err = stamp_manifest_text(text, name, sha)
+            if err:
+                print(f"{name}: ERROR: {err}", file=sys.stderr)
+                continue
+            if new_text == text:
+                continue  # already stamped at this hash; nothing changed
+            try:
+                parse_manifest(new_text)  # never leave broken TOML behind
+            except (tomllib.TOMLDecodeError, ValueError) as e:
+                print(
+                    f"{name}: ERROR: stamping would break the manifest: {e}",
+                    file=sys.stderr,
+                )
+                continue
+            text = new_text
+            print(f'{name}: stamped patches_base = "{sha}" in {manifest.name}')
+        if text != original_text:
+            try:
+                manifest.write_text(text, encoding="utf-8")
+            except OSError as exc:
+                print(f"ERROR: could not write {manifest}: {exc}", file=sys.stderr)
+                return 1
 
     if dry_run:
         would = sorted(set(pins) - set(resolved) - refusals)

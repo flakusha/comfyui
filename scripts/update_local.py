@@ -243,6 +243,17 @@ def set_floor(pyproject: str, name: str, version: str) -> str:
     return "".join(lines)
 
 
+def patches_bases(text: str) -> dict[str, str]:
+    """`node -> patches_base` map from manifest text, for diffing a sync's stamps."""
+    bases = {}
+    for table in re.split(r"(?=^\[nodes\.)", text, flags=re.M):
+        m = re.match(r"\[nodes\.([\w-]+)\]", table)
+        b = re.search(r'^patches_base\s*=\s*"([^"]*)"', table, flags=re.M)
+        if m and b:
+            bases[m.group(1)] = b.group(1)
+    return bases
+
+
 def parse_patch_ids(output: str | bytes) -> list[tuple[str, str]]:
     """Parse `git patch-id --stable` output: one "<patch-id> <sha>" pair per line."""
     if isinstance(output, bytes):
@@ -700,11 +711,37 @@ def main(argv: list[str] | None = None) -> int:
     # 5. custom node checkouts (manifest-pinned refs), then the deps the
     # workspace/lock missed (install ends with its built-in post-install audit)
     print("=== custom node repositories (manifest refs) ===")
+    manifest = REPO_ROOT / "custom_nodes.manifest.toml"
+    try:
+        manifest_before = manifest.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        manifest_before = None
     if run_cmd([str(venv_python()), str(CUSTOM_NODES_DEPS), "sync"]) != 0:
         fail(
             "manifest sync failed; aborting update "
             "(stack rollback: git reset --hard refs/pre-rebase-backup)."
         )
+    manifest_after = (
+        manifest.read_text(encoding="utf-8") if manifest.is_file() else None
+    )
+    if (
+        manifest_before is not None
+        and manifest_after != manifest_before
+        and git_output("status", "--porcelain", "--", "custom_nodes.manifest.toml")
+    ):
+        # the sync auto-stamped patches_base; commit so the next update's
+        # dirty-tree guard still rebases
+        after = patches_bases(manifest_after)
+        names = sorted(
+            n for n in after if patches_bases(manifest_before).get(n) != after[n]
+        )
+        if run_cmd(["git", "add", "custom_nodes.manifest.toml"]) != 0 or run_cmd(
+            ["git", "commit", "-m", f"Stamp patches_base for {', '.join(names)}"]
+        ) != 0:
+            fail(
+                "git commit of the patches_base stamp failed; the edit stays in the "
+                "tree — commit custom_nodes.manifest.toml by hand, then rerun."
+            )
     print("=== custom node dependencies ===")
     run_quietly([str(venv_python()), str(CUSTOM_NODES_DEPS), "install"])
 
