@@ -85,7 +85,7 @@ ref = "main"
 url = "https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes.git"
 ref = "main"
 patches = ["0001-continuity-analyze-cancel-on-client-disconnect.patch"]
-patches_base = "65cf1375932ac5342434dd18c6403d289bcdca76"
+patches_base = "0ac69625b0a1d52c25aa85d81d8385527874a1d1"
 
 [nodes.ComfyUI-DeGrid]
 url = "https://github.com/lunaaispace-eng/ComfyUI-DeGrid.git"
