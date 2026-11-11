@@ -166,7 +166,7 @@ ref = "main"
 # .docx/.odt/.pdf export on Save (python-docx, odfdo, xhtml2pdf); vector_stores stays opt-in.
 extras = ["document_export", "llm"]
 patches = ["0001-web-fetches-honor-base-path.patch", "0002-llm-gguf-gpu-backend-wording.patch", "0003-llm-seeds-stay-fixed-for-caching.patch"]
-patches_base = "11698699dbf9ec0c36aed063cefb212a8042adff"
+patches_base = "84fd53ada7dcc5b9ae0bb8af6626c90e3265c43c"
 
 [nodes.comfyui-minimaxh3-director]
 url = "https://github.com/flakusha/ComfyUI-MiniMaxH3-Director.git"
