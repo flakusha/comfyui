@@ -35,6 +35,35 @@
 <br>
 </div>
 
+> **Local fork.** This checkout is a personal fork: the `local` branch carries a
+> stack of patch commits rebased onto upstream `master`; custom nodes are pinned
+> per `custom_nodes.manifest.toml` (patches in `custom_nodes_patches/`).
+> **Rebase/force-push policy:** upstream and the `origin/master` mirror are only
+> ever moved by fast-forward — the script never force-pushes. Mirroring upstream
+> into `origin/master` is a guarded prompt (`--mirror` to auto-approve, `--no-mirror`
+> to skip; manual: `git push origin master:master`); a diverged remote fails the
+> push instead of being clobbered. The rebase `--force` flag only accepts a rebase
+> that dropped stack commits — it never rewrites the remote. Rollback mid-rebase:
+> `git rebase --abort`; after: `git reset --hard refs/pre-rebase-backup`.
+>
+> **Run:** `python scripts/start_local.py [-- any main.py args]` — launches
+> `main.py` from the uv-managed `.venv` with this machine's fixed flags
+> (`--cuda-device 0 --preview-method latent2rgb --use-ck-attention
+> --enable-manager --high-ram`) and the usual output directory; any extra
+> arguments pass straight through to `main.py`.
+>
+> **Update:** `python scripts/update_local.py --extra rocm --extra onnx-rocm
+> --extra sage --extra manager` — fetches upstream (FF-only), guards the
+> `origin/master` mirror push, rebases the patch stack (patch-id check; a
+> dropped commit refuses unless `--force`), runs `uv sync` (skipped when a
+> dry-run proves no changes), syncs pinned custom nodes + their deps,
+> rebuilds `llama-cpp-python` with Vulkan when needed, and runs gates
+> (`--skip-gates` to skip, `--tests` for the full upstream suite).
+> Custom-node patches live in `custom_nodes_patches/` and are re-applied by
+> `scripts/custom_nodes_deps.py sync`; after verifying a patch stack against
+> a moved upstream ref, re-stamp with `custom_nodes_deps.py sync
+> --stamp-patches-base <node>`.
+
 ComfyUI is the AI creation engine for visual professionals who demand control over every model, every parameter, and every output. Its powerful and modular node graph interface empowers creatives to generate images, videos, 3D models, audio, and more...
 - ComfyUI natively supports the latest open-source state of the art models.
 - It is by far the most optimized inference engine for diffusion models in the world with a focus on local consumer hardware.
