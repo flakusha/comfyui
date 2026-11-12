@@ -170,12 +170,13 @@ patches_base = "29da784821e3f5de3a7fd8ae6d5acc6abcf8e392"
 
 [nodes.comfyui-minimaxh3-director]
 url = "https://github.com/flakusha/ComfyUI-MiniMaxH3-Director.git"
-# Fork-owned work is hash-pinned so sync resolves the exact commit against
-# the fetched object store and never fast-forwards or refuses on divergence;
-# update the pin after new commits. Pinned: the `local-patches` branch tip
+# Full fork: local work lives as real commits on the `local-patches` branch
 # (base a672c64 = `local` + turbo removal, the duration-override warning and
-# the connected-length field lock as real commits).
-ref = "03439443039ee1489ea44b5a7a16a2eb43c5f163"
+# the connected-length field lock), pushed to the fork. The branch-name ref
+# tracks origin/local-patches, so sync fast-forwards the checkout after each
+# push and refuses if the checkout ever diverges. After upstream (`local`)
+# moves: rebase local-patches onto it, push, sync.
+ref = "local-patches"
 
 [nodes.comfyui-speed-sampler]
 url = "https://github.com/StanLukuvka/ComfyUI-SPEED-Sampler.git"
