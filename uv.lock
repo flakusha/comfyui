@@ -1290,7 +1290,7 @@ requires-dist = [
     { name = "comfy-angle" },
     { name = "comfy-kitchen", specifier = ">=0.2.41" },
     { name = "comfyui-embedded-docs", specifier = ">=0.5.16" },
-    { name = "comfyui-frontend-package", specifier = ">=1.58.5" },
+    { name = "comfyui-frontend-package", specifier = ">=1.59.1" },
     { name = "comfyui-manager", marker = "extra == 'manager'", specifier = ">=4.2.2" },
     { name = "comfyui-workflow-templates", specifier = ">=0.11.106" },
     { name = "cryptography", marker = "extra == 'dev'" },
@@ -1357,7 +1357,7 @@ source = { virtual = "custom_nodes/ComfyUI-ClipProj" }
 
 [[package]]
 name = "comfyui-dasiwa-nodes"
-version = "0.5.42"
+version = "0.5.45"
 source = { virtual = "custom_nodes/ComfyUI-DaSiWa-Nodes" }
 dependencies = [
     { name = "accelerate" },
@@ -1440,11 +1440,11 @@ wheels = [
 
 [[package]]
 name = "comfyui-frontend-package"
-version = "1.58.5"
+version = "1.59.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a7/95/35052db164d0a43d7d1c21d64a5896e4c94470e3d4e47742764ad28dd49d/comfyui_frontend_package-1.58.5.tar.gz", hash = "sha256:f407599249471e2e3c85084358f293f33d0bff8a59e2f2a6e26d638802268dec", size = 28742862, upload-time = "2026-11-03T04:43:19.636Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/c3/7d0090bf142819599e0662ac643cfb1e82c0ccb3673422d1227945e16d72/comfyui_frontend_package-1.59.1.tar.gz", hash = "sha256:e9543a533d0590f899c0928a6be9f1829415378a97a67d4c5fd310067712f356", size = 28568334, upload-time = "2026-11-11T17:33:45.301Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/a4/601b1471318e8c72d08d8a715417ef71056729fda0148b3e509091ba3e15/comfyui_frontend_package-1.58.5-py3-none-any.whl", hash = "sha256:d1eb47e5a3b71b0191e42b0633c66eb8b362c46c22cd0036524fd1f5ac9096ce", size = 29412073, upload-time = "2026-11-03T04:43:16.509Z" },
+    { url = "https://files.pythonhosted.org/packages/19/49/08e92053628d9c5f74b5dbf82c40acd85b4ff979b2406d165433a12ba418/comfyui_frontend_package-1.59.1-py3-none-any.whl", hash = "sha256:7f58ed6427e621b431fdeb3e78aaceeeb3661be8f56d8662e118bf32cae147c1", size = 29624589, upload-time = "2026-11-11T17:33:42.48Z" },
 ]
 
 [[package]]
@@ -1569,7 +1569,7 @@ requires-dist = [
 
 [[package]]
 name = "comfyui-spectrum-minimax-h3"
-version = "0.2.29"
+version = "0.2.30"
 source = { editable = "custom_nodes/comfyui-spectrum-minimax-h3" }
 
 [[package]]
@@ -7599,7 +7599,7 @@ wheels = [
 
 [[package]]
 name = "was-node-suite-comfyui"
-version = "3.10.6"
+version = "3.10.11"
 source = { virtual = "custom_nodes/was-node-suite-comfyui" }
 
 [package.optional-dependencies]
