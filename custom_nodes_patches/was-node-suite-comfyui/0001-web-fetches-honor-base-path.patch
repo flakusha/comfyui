@@ -20,10 +20,10 @@ index 1e3748e..8deec64 100644
      });
      if (response.ok) {
 diff --git a/web/threejs/render_jobs.js b/web/threejs/render_jobs.js
-index c330faf..f98d78c 100644
+index acfc51e..095e390 100644
 --- a/web/threejs/render_jobs.js
 +++ b/web/threejs/render_jobs.js
-@@ -243,7 +243,7 @@ async function serveJobs() {
+@@ -306,7 +306,7 @@ async function serveJobs() {
      let taken = [];
      try {
          const asking = `${ROUTE}?client_id=${encodeURIComponent(sessionId())}`;
@@ -32,7 +32,7 @@ index c330faf..f98d78c 100644
          if (!answer.ok) return 0;
          taken = (await answer.json()).jobs || [];
      } catch (error) {
-@@ -251,7 +251,7 @@ async function serveJobs() {
+@@ -314,7 +314,7 @@ async function serveJobs() {
      }
  
      for (const job of taken) {

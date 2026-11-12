@@ -1,30 +1,51 @@
 diff --git a/docs/LLM.md b/docs/LLM.md
-index 5df4f8b0..3d6288ec 100644
+index eaf891b..5dfafa8 100644
 --- a/docs/LLM.md
 +++ b/docs/LLM.md
-@@ -10,7 +10,7 @@ Every node, with its inputs and outputs, is in [`NODES.md`](../NODES.md).
+@@ -10,13 +10,14 @@ Every node, with its inputs and outputs, is in [`NODES.md`](../NODES.md).
  | Install | `pip install -r requirements/llm.txt` with ComfyUI's own python. On the portable build, from `ComfyUI_windows_portable`: `python_embeded\python.exe -m pip install -r ComfyUI\custom_nodes\was-node-suite-comfyui\requirements\llm.txt` |
  | Enable | `features.llm: true` in `ComfyUI/user/was-node-suite/config.yaml`, then restart ComfyUI |
  | Hosted models | `features.network: true` as well. With it off, every hosted model and web tool refuses to run, and models on this machine still run |
--| GGUF models | A `llama-cpp-python` build matching the machine's CUDA version, from that project's prebuilt wheels. The build PyPI installs runs on the CPU only |
-+| GGUF models | A `llama-cpp-python` build with GPU support for this machine: a CUDA build matching the installed CUDA version from that project's prebuilt wheels, or a Vulkan or ROCm source build. The build PyPI installs runs on the CPU only |
+-| GGUF models | A `llama-cpp-python` build with CUDA, below. The build PyPI installs runs on the CPU only |
++| GGUF models | A `llama-cpp-python` build with CUDA, Vulkan or ROCm, below. The build PyPI installs runs on the CPU only |
  
- ## Keys
+ ## GGUF on the GPU
  
-@@ -194,7 +194,7 @@ llm:
+-`llama-cpp-python` is built on the machine with CUDA turned on. The build needs the CUDA toolkit
+-of the version torch was built for (`python -c "import torch; print(torch.version.cuda)"`) and a
+-C++ compiler: Visual Studio's C++ build tools on Windows, `gcc` on Linux. ComfyUI is stopped while
++`llama-cpp-python` is built on the machine with the GPU backend turned on. The commands below
++build it with CUDA; the backend is picked with one `CMAKE_ARGS` flag. A CUDA build needs the CUDA
++toolkit of the version torch was built for (`python -c "import torch; print(torch.version.cuda)"`) and
++a C++ compiler: Visual Studio's C++ build tools on Windows, `gcc` on Linux. ComfyUI is stopped while
+ it installs.
+ 
+ | System | Commands |
+@@ -24,6 +25,10 @@ it installs.
+ | Windows portable, from `ComfyUI_windows_portable` in an x64 Native Tools Command Prompt | `set CMAKE_ARGS=-DGGML_CUDA=on`<br>`python_embeded\python.exe -m pip install llama-cpp-python --no-binary llama-cpp-python --force-reinstall --no-deps --no-cache-dir` |
+ | Linux | `CMAKE_ARGS="-DGGML_CUDA=on" python -m pip install llama-cpp-python --no-binary llama-cpp-python --force-reinstall --no-deps --no-cache-dir` |
+ 
++A build for another backend is the same command with another flag: `-DGGML_VULKAN=on` for Vulkan,
++`-DGGML_HIP=on` for ROCm on an AMD GPU. A Vulkan build needs the Vulkan SDK and a ROCm build needs
++the HIP toolkit; the CPU build needs neither.
++
+ The LLM GGUF Loader panel reads `every layer` under `gpu` once the build uses the GPU, and `CPU
+ only` when it does not.
+ 
+@@ -222,7 +227,7 @@ llm:
  | `Set OPENAI_API_KEY in the environment ComfyUI starts from` | The variable is not set where ComfyUI runs | Set it and restart ComfyUI |
  | `Nothing answered at the model's address` | A local server such as Ollama is not running | Start it and load the model |
  | `You have no credits remaining` | The provider account has no credit | Add credit with the provider |
--| GGUF runs slowly and its panel says CPU only | `llama-cpp-python` came from PyPI | Install a CUDA build |
-+| GGUF runs slowly and its panel says CPU only | `llama-cpp-python` came from PyPI | Install a build with GPU support (CUDA, Vulkan, or ROCm) |
- | `This step needs an embedding model and none was connected` | A step needed embeddings and none was wired | Connect LLM Embedding Model to the node's `embedding` input |
- | A chat answers a repeated message with its last reply | An unchanged message to a saved conversation is answered from it | Change the message to ask again |
- | The conversation menu is empty after a restart | `features.llm` was turned off, or nothing has been saved yet | Turn it on and restart ComfyUI, or send a message |
+-| GGUF runs slowly and its panel says CPU only | `llama-cpp-python` was built without CUDA | Build it with CUDA, as in [GGUF on the GPU](#gguf-on-the-gpu) |
++| GGUF runs slowly and its panel says CPU only | `llama-cpp-python` was built without a GPU backend | Build it with CUDA, Vulkan or ROCm, as in [GGUF on the GPU](#gguf-on-the-gpu) |
+ | The CUDA build fails with `unsupported Microsoft Visual Studio version` | The CUDA toolkit is older than the Visual Studio found first | Run the commands from the Native Tools Command Prompt of a Visual Studio release that toolkit supports |
+ | LM Studio's models are missing from the GGUF menus | ComfyUI runs as another user, in WSL or in a container, or the models folder is on another machine | Add the folder under `LLM:` in `extra_model_paths.yaml` and restart ComfyUI |
+ | An LM Studio model fails with `unknown model architecture` | LM Studio's own engine is newer than the installed `llama-cpp-python` | Install a newer `llama-cpp-python` build, or run the model in LM Studio and reach it with LLM Provider set to `lmstudio` |
 diff --git a/modules/llm/embeddings.py b/modules/llm/embeddings.py
-index 4b6323e3..12957c03 100644
+index 80eeb35..208abe1 100644
 --- a/modules/llm/embeddings.py
 +++ b/modules/llm/embeddings.py
-@@ -638,9 +638,10 @@ def _llama_cpp():
+@@ -644,9 +644,10 @@ def _llama_cpp():
      if module is None:
          raise deps.DependencyError(
              "LLM Embedding Model needs llama-cpp-python to read a .gguf file, and it is not "
@@ -33,16 +54,16 @@ index 4b6323e3..12957c03 100644
 -            "llama-cpp-python README lists, or the CPU build. features.llm turned this node on."
 +            "installed in the python that runs ComfyUI. Install a build with GPU support that "
 +            "matches this machine: a CUDA build picked to match the installed CUDA version from "
-+            "the prebuilt wheels the llama-cpp-python README lists, or a Vulkan or ROCm source "
-+            "build, or the CPU build. features.llm turned this node on."
++            "the prebuilt wheels the llama-cpp-python README lists, a Vulkan or ROCm source build, "
++            "or the CPU build. features.llm turned this node on."
          )
      return module
  
 diff --git a/modules/llm/gguf.py b/modules/llm/gguf.py
-index b69ab7dd..d48a9cdc 100644
+index 4e1bf87..f6b0863 100644
 --- a/modules/llm/gguf.py
 +++ b/modules/llm/gguf.py
-@@ -107,9 +107,10 @@ def require():
+@@ -127,9 +127,10 @@ def require():
      if module is None:
          raise deps.DependencyError(
              "LLM GGUF Loader needs llama-cpp-python, which is not installed in the python that "
@@ -51,8 +72,8 @@ index b69ab7dd..d48a9cdc 100644
 -            "the llama-cpp-python README, or the CPU build. features.llm turned this node on."
 +            "runs ComfyUI. Install a build with GPU support that matches this machine: a CUDA "
 +            "build for an NVIDIA GPU, picked to match the installed CUDA version from the prebuilt "
-+            "wheels listed in the llama-cpp-python README, a Vulkan or ROCm source build for an "
-+            "AMD GPU, or the CPU build. features.llm turned this node on."
++            "wheels listed in the llama-cpp-python README, a Vulkan or ROCm source build, or the "
++            "CPU build. features.llm turned this node on."
          )
      return module
-
+ 

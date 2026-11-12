@@ -14,10 +14,10 @@ index 1d55aa8..1ec185c 100644
                      io.Float.Input(
                          "presence_penalty", default=0.0, min=0.0, max=5.0, step=0.01, optional=True,
 diff --git a/nodes/llm/llm_gguf_loader.py b/nodes/llm/llm_gguf_loader.py
-index 4bd7a6b..83814c6 100644
+index 382486d..c111ae9 100644
 --- a/nodes/llm/llm_gguf_loader.py
 +++ b/nodes/llm/llm_gguf_loader.py
-@@ -97,8 +97,8 @@ class WASLLMGGUFLoader(io.ComfyNode):
+@@ -103,8 +103,8 @@ class WASLLMGGUFLoader(io.ComfyNode):
                      tooltip="Above `1.0` makes a token already used less likely again. `1.0` turns it off.",
                  ),
                  io.Int.Input(
