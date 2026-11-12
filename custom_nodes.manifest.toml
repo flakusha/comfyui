@@ -80,6 +80,8 @@
 [nodes.ComfyUI-ClipProj]
 url = "https://github.com/nicolab28/ComfyUI-ClipProj"
 ref = "main"
+patches = ["0001-projection-tensors-heap-owned-clone.patch", "0002-pinned-partial-unload-keeps-accounting.patch"]
+patches_base = "c01ba8fb8f41b4f2094dbd0b185cdc238fb6134c"
 
 [nodes.ComfyUI-DaSiWa-Nodes]
 url = "https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes.git"
