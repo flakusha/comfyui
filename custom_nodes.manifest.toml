@@ -105,7 +105,7 @@ patches_base = "c01ba8fb8f41b4f2094dbd0b185cdc238fb6134c"
 url = "https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes.git"
 ref = "main"
 patches = ["0001-continuity-analyze-cancel-on-client-disconnect.patch"]
-patches_base = "e5d5307959fe6cba86c35eecb05a897dbd4f2748"
+patches_base = "786326e2c6560e46efb3a2edd299b8f6a23b5e8b"
 
 [nodes.ComfyUI-DeGrid]
 url = "https://github.com/lunaaispace-eng/ComfyUI-DeGrid.git"
@@ -190,7 +190,7 @@ ref = "main"
 # .docx/.odt/.pdf export on Save (python-docx, odfdo, xhtml2pdf); vector_stores stays opt-in.
 extras = ["document_export", "llm"]
 patches = ["0001-web-fetches-honor-base-path.patch", "0002-llm-gguf-gpu-backend-wording.patch", "0003-llm-seeds-stay-fixed-for-caching.patch"]
-patches_base = "93469801ec09743fc513e328ffa5877b9d05db4c"
+patches_base = "b1cddaad3a56e8b16b48af038074b35b26092fac"
 
 [nodes.comfyui-minimaxh3-director]
 url = "https://github.com/flakusha/ComfyUI-MiniMaxH3-Director.git"
