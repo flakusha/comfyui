@@ -50,6 +50,12 @@
 #        is refused loudly, never discarded, and a ref move under an applied
 #        stack resets it first and re-applies after convergence. Patchless
 #        nodes keep the plain dirty-worktree refusal unchanged.
+#        A patch may also CREATE a file (a /dev/null pre-image): the file is
+#        then new in the clone, and the tooling's unwind stages it by name (see
+#        _patches_applied in scripts/custom_nodes_deps.py), so it has to end up
+#        staged in the clone's index — that is the state sync reads as "stack
+#        already applied". A ref move under an applied stack recreates such a
+#        file unstaged, so it must be staged again.
 #   patches_base optional commit hash (7-40 lowercase hex, or the literal
 #        "unknown") recording the upstream commit this node's patch stack
 #        was last known-good on. Written by the tooling, not by hand:
