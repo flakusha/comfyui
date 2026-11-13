@@ -676,9 +676,17 @@ def plan_sync(state: RepoState, target: str, branch: str | None) -> Plan:
 
 
 def _git_out(repo: Path, *args: str) -> str:
-    """git stdout inside a repo, or '' on failure (update_local.git_output style)."""
+    """git stdout inside a repo, or '' on failure (update_local.git_output style).
+
+    Decoded with surrogateescape: git prints the bytes of the files it
+    handles, so a diff over a non-UTF-8 source file is not valid UTF-8 text
+    and a strict decode would crash the tool on that output.
+    """
     proc = subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        errors="surrogateescape",
     )
     return proc.stdout if proc.returncode == 0 else ""
 
@@ -715,7 +723,11 @@ def _git_env_rc(repo: Path, env: dict[str, str], *args: str) -> bool:
 def _git_env_out(repo: Path, env: dict[str, str], *args: str) -> str:
     """_git_out with extra environment (e.g. GIT_INDEX_FILE) on the git call."""
     proc = subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True, env=env
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        errors="surrogateescape",
+        env=env,
     )
     return proc.stdout if proc.returncode == 0 else ""
 
@@ -757,6 +769,17 @@ def _patch_files(name: str, pin: NodePin) -> list[Path]:
     return files
 
 
+def _patch_lines(patch: Path) -> list[str]:
+    """A patch file's lines, byte-preserving.
+
+    A patch carries the bytes of the file it patches, so a stack over a
+    non-UTF-8 source file is not valid UTF-8 text. Read it with
+    surrogateescape: the header lines the callers parse are ASCII, and the
+    content lines keep their bytes instead of crashing the tool.
+    """
+    return patch.read_text(encoding="utf-8", errors="surrogateescape").splitlines()
+
+
 def _patch_new_files(patch: Path) -> list[str]:
     """Paths a patch creates: diff headers with a /dev/null pre-image.
 
@@ -764,7 +787,7 @@ def _patch_new_files(patch: Path) -> list[str]:
     absent from HEAD, hence untracked in the worktree — must be staged by
     name for the unwind below to reverse their creation hunks.
     """
-    lines = patch.read_text(encoding="utf-8").splitlines()
+    lines = _patch_lines(patch)
     return [
         lines[i + 1][len("+++ b/"):]
         for i in range(len(lines) - 1)
@@ -776,7 +799,7 @@ def _patch_paths(files: list[Path]) -> set[str]:
     """Repo-relative paths a patch stack touches, from its ---/+++ headers."""
     paths = set()
     for f in files:
-        for line in f.read_text(encoding="utf-8").splitlines():
+        for line in _patch_lines(f):
             if line.startswith("--- a/") or line.startswith("+++ b/"):
                 paths.add(line[6:])
     return paths

@@ -440,6 +440,46 @@ def test_sync_node_dry_run_and_real_refuse_a_stack_that_does_not_compile(
     assert (work / "a.py").read_text(encoding="utf-8") == "ok = 1\n"
 
 
+def test_sync_node_stack_over_a_non_utf8_source_file(tmp_path, monkeypatch, capsys):
+    # a patch carries the bytes of the file it patches, so a stack over a
+    # latin-1 source file is not valid UTF-8 text: reading it as UTF-8
+    # crashed the tool with a UnicodeDecodeError. The bytes must survive.
+    # Owns only its own tmp_path: origin.git, the clone and the patch stack;
+    # CUSTOM_NODES_DIR/PATCHES_DIR are redirected per test and restored.
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _run("init", "-q", "-b", "main", cwd=seed)
+    (seed / "l.py").write_bytes(b"x = 1\n")
+    _run("add", ".", cwd=seed)
+    _run("commit", "-qm", "c1", cwd=seed)
+    c1 = _rev(seed)
+    origin = tmp_path / "origin.git"
+    _run("clone", "--bare", "-q", str(seed), str(origin))
+    work = tmp_path / "work"
+    _run("clone", "-q", str(origin), str(work))
+    patches_dir = tmp_path / "patches"
+    (patches_dir / "work").mkdir(parents=True)
+    (patches_dir / "work" / "0001-l.py.patch").write_bytes(
+        "diff --git a/l.py b/l.py\n"
+        "--- a/l.py\n"
+        "+++ b/l.py\n"
+        "@@ -1 +1,2 @@\n"
+        "-x = 1\n"
+        "+# -*- coding: latin-1 -*-\n"
+        "+s = 'caf\xe9'\n".encode("latin-1")
+    )
+    monkeypatch.setattr(deps, "CUSTOM_NODES_DIR", tmp_path)
+    monkeypatch.setattr(deps, "PATCHES_DIR", patches_dir)
+    pin = deps.NodePin(
+        url=str(origin), ref="main", patches=("0001-l.py.patch",), patches_base=c1
+    )
+    assert deps.sync_node("work", pin) == c1
+    assert (work / "l.py").read_bytes() == b"# -*- coding: latin-1 -*-\ns = 'caf\xe9'\n"
+    capsys.readouterr()
+    assert deps.sync_node("work", pin) == c1  # idempotent: stack already applied
+    assert "patches already applied (1 patch(es))" in capsys.readouterr().out
+
+
 def test_sync_node_dry_run_refusal_reports_no_drift_warning(
     tmp_path, monkeypatch, capsys
 ):
