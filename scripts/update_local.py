@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Local updater: fetch upstream master (FF-only) -> guarded mirror to origin/master -> rebase
-the patch stack onto master -> uv sync (rocm + manager + dev) -> custom-node manifest
+the patch stack onto master -> uv sync (hardware extra + manager + dev) -> custom-node manifest
 sync (pinned refs; a refusal aborts the run) -> custom-node deps -> llama-cpp
 Vulkan rebuild (step 5b; best-effort, never aborts) -> gates.
 
@@ -13,14 +13,15 @@ routine: python scripts/update_local.py
 --skip-gates  skip post-bump ruff/import checks
 --tests       also run the full upstream tests-unit suite (opt-in; the suite is
               an upstream concern, not this fork's gate)
-pass optional extras through: --extra sage --extra onnx-rocm (rocm, cuda, and cpu extras are mutually
-exclusive — passing more than one exits code 2)
+pass optional extras through: --extra sage --extra onnx-rocm (hardware extras
+rocm-arch-*/cuda/cpu/xpu are mutually exclusive, as are
+llama-vulkan/llama-cuda/llama-rocm/llama-cpu — passing more than one exits code 2)
 first run / after changing extras: uv lock --upgrade first, then this script
 pyproject.toml conflict -> merge hunks BY HAND, never a wholesale side; runbook:
   .tmp/proposals/update-rebase-tooling.md §3b (merge [tool.uv] keys; then uv lock --check).
 rollback: mid-rebase -> git rebase --abort ; after -> git reset --hard refs/pre-rebase-backup
   (on local; the ref is kept until gates pass, then deleted)
-  env: git checkout uv.lock && uv sync --inexact --extra rocm --extra manager --extra dev --python .venv/bin/python
+  env: git checkout uv.lock && uv sync --inexact --extra rocm-arch-gfx1100 --extra manager --extra dev --python .venv/bin/python
   (uv.lock is tracked, so the checkout restores its committed state)
 --inexact required: bare uv sync removes custom-node packages
 out-of-band venv installs (uv pip install ...) are silently reverted by the sync; the
@@ -154,7 +155,7 @@ def parse_args(argv: list[str] | None = None) -> Options:
         action="append",
         default=[],
         metavar="NAME",
-        help="extra passthrough to uv sync (repeatable)",
+        help="extra passthrough to uv sync (repeatable; rocm-arch-*/cuda/cpu/xpu are mutually exclusive, as are llama-vulkan/llama-cuda/llama-rocm/llama-cpu)",
     )
     args = parser.parse_args(argv)
 
@@ -697,7 +698,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     sync_mode = "applied"
     if sync_required(opts.force, dry_run_rc, would_remove, would_install):
-        print("=== uv sync (rocm + manager + dev) ===")
+        print("=== uv sync (hardware extra + manager + dev) ===")
         run_sync(opts.extras)
     else:
         # the dry-run above just proved the real sync a no-op; skipping it keeps

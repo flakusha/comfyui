@@ -49,20 +49,26 @@
 > **Run:** `python scripts/start_local.py [-- any main.py args]` — launches
 > `main.py` from the uv-managed `.venv` with this machine's fixed flags
 > (`--cuda-device 0 --preview-method latent2rgb --use-ck-attention
-> --enable-manager --high-ram`) and the usual output directory; any extra
+> --enable-manager`) and the usual output directory; any extra
 > arguments pass straight through to `main.py`.
 >
-> **Update:** `python scripts/update_local.py --extra rocm --extra onnx-rocm
-> --extra sage --extra manager` — fetches upstream (FF-only), guards the
+> **Update:** `python scripts/update_local.py --extra rocm-arch-gfx1100
+> --extra onnx-rocm --extra sage --extra manager` — fetches upstream (FF-only),
+> guards the
 > `origin/master` mirror push, rebases the patch stack (patch-id check; a
 > dropped commit refuses unless `--force`), runs `uv sync` (skipped when a
-> dry-run proves no changes), syncs pinned custom nodes + their deps,
-> rebuilds `llama-cpp-python` with Vulkan when needed, and runs gates
+> dry-run proves no changes), syncs pinned custom nodes + their deps
+> (`custom_nodes_deps.py sync`, `--dry-run` to preview), rebuilds
+> `llama-cpp-python` with Vulkan when needed
+> (`scripts/rebuild_llama_cpp_vulkan.py --flavor vulkan`, `--check` for a
+> no-install probe, `--force` to rebuild anyway), and runs gates
 > (`--skip-gates` to skip, `--tests` for the full upstream suite).
-> Custom-node patches live in `custom_nodes_patches/` and are re-applied by
-> `scripts/custom_nodes_deps.py sync`; after verifying a patch stack against
-> a moved upstream ref, re-stamp with `custom_nodes_deps.py sync
-> --stamp-patches-base <node>`.
+> Audit custom-node deps any time with `custom_nodes_deps.py audit` and fill
+> gaps with `custom_nodes_deps.py install` (both take `--json`; install takes
+> `--dry-run`). Custom-node patches live in `custom_nodes_patches/` and are
+> re-applied by `scripts/custom_nodes_deps.py sync`; after verifying a patch
+> stack against a moved upstream ref, re-stamp with `custom_nodes_deps.py
+> sync --stamp-patches-base <node>`.
 
 ComfyUI is the AI creation engine for visual professionals who demand control over every model, every parameter, and every output. Its powerful and modular node graph interface empowers creatives to generate images, videos, 3D models, audio, and more...
 - ComfyUI natively supports the latest open-source state of the art models.

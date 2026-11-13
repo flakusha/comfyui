@@ -44,8 +44,15 @@ CUSTOM_NODES_DEPS = REPO_ROOT / "scripts" / "custom_nodes_deps.py"
 
 
 def main(argv: list[str] | None = None) -> int:
-    os.chdir(REPO_ROOT)
     extra = list(sys.argv[1:] if argv is None else argv)
+    if extra in (["-h"], ["--help"]):
+        print(__doc__.strip())
+        print("\nusage: start_local.py [-- extra main.py args]")
+        print("\nFixed main.py flags (this launcher has no flags of its own):")
+        print("  " + " ".join(a for a in FIXED_ARGS if not a.startswith("#")))
+        print("  --output-directory " + str(OUTPUT_DIRECTORY))
+        return 0
+    os.chdir(REPO_ROOT)
     env = dict(os.environ)
     hardware, _arch = detect_gpu()
     if hardware is not None and hardware.startswith("rocm-arch") and hardware != "rocm-arch-all" and "ROCR_VISIBLE_DEVICES" not in env:
