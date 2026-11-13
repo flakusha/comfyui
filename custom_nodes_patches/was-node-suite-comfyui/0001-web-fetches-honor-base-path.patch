@@ -20,10 +20,10 @@ index 1e3748e..8deec64 100644
      });
      if (response.ok) {
 diff --git a/web/threejs/render_jobs.js b/web/threejs/render_jobs.js
-index acfc51e..095e390 100644
+index 4c46ef1..c399a59 100644
 --- a/web/threejs/render_jobs.js
 +++ b/web/threejs/render_jobs.js
-@@ -306,7 +306,7 @@ async function serveJobs() {
+@@ -337,7 +337,7 @@ async function serveJobs() {
      let taken = [];
      try {
          const asking = `${ROUTE}?client_id=${encodeURIComponent(sessionId())}`;
@@ -32,17 +32,17 @@ index acfc51e..095e390 100644
          if (!answer.ok) return 0;
          taken = (await answer.json()).jobs || [];
      } catch (error) {
-@@ -314,7 +314,7 @@ async function serveJobs() {
-     }
+@@ -347,7 +347,7 @@ async function serveJobs() {
  
      for (const job of taken) {
--        const post = (payload) => fetch(ROUTE, {
-+        const post = (payload) => api.fetchApi(ROUTE, {
-             method: "POST",
-             headers: { "Content-Type": "application/json" },
-             body: JSON.stringify({ token: job.token, ...payload }),
+         const post = async (payload) => {
+-            const answer = await fetch(ROUTE, {
++            const answer = await api.fetchApi(ROUTE, {
+                 method: "POST",
+                 headers: { "Content-Type": "application/json" },
+                 body: JSON.stringify({ token: job.token, ...payload }),
 diff --git a/web/threejs/runtime.js b/web/threejs/runtime.js
-index 96b8dac..d99b5c9 100644
+index 911b47f..a66816f 100644
 --- a/web/threejs/runtime.js
 +++ b/web/threejs/runtime.js
 @@ -35,6 +35,19 @@ const SCHEMA_VERSION = 1;
@@ -130,7 +130,7 @@ index 96b8dac..d99b5c9 100644
      const format = String(params.format || "").toLowerCase();
      if (!address) throw new Error("Three Load Model gave no address to read from.");
  
-@@ -426,7 +461,7 @@ async function readModel(params, manager) {
+@@ -433,7 +468,7 @@ async function readModel(params, manager) {
          );
          if (library) {
              const { MTLLoader } = await import("../vendor/three/loaders/MTLLoader.js");
@@ -139,7 +139,7 @@ index 96b8dac..d99b5c9 100644
              materials.preload();
              loader.setMaterials(materials);
          }
-@@ -801,7 +836,7 @@ export function createRuntime(canvas, statusElement, options = {}) {
+@@ -1341,7 +1376,7 @@ export function createRuntime(canvas, statusElement, options = {}) {
              }
  
              const params = spec.params || {};
@@ -148,7 +148,7 @@ index 96b8dac..d99b5c9 100644
              if (!isHeldAddress(address) && !(networkAllowed && isWebAddress(address))) {
                  throw new Error(
                      "A texture names an address outside ComfyUI, and this page fetches only "
-@@ -1352,7 +1387,7 @@ export function createRuntime(canvas, statusElement, options = {}) {
+@@ -1958,7 +1993,7 @@ export function createRuntime(canvas, statusElement, options = {}) {
              const { RoomEnvironment } = await import("../vendor/three/environments/RoomEnvironment.js");
              room = new RoomEnvironment();
          } else {

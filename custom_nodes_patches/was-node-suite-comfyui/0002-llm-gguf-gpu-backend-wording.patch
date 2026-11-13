@@ -42,10 +42,10 @@ index eaf891b..5dfafa8 100644
  | LM Studio's models are missing from the GGUF menus | ComfyUI runs as another user, in WSL or in a container, or the models folder is on another machine | Add the folder under `LLM:` in `extra_model_paths.yaml` and restart ComfyUI |
  | An LM Studio model fails with `unknown model architecture` | LM Studio's own engine is newer than the installed `llama-cpp-python` | Install a newer `llama-cpp-python` build, or run the model in LM Studio and reach it with LLM Provider set to `lmstudio` |
 diff --git a/modules/llm/embeddings.py b/modules/llm/embeddings.py
-index 80eeb35..208abe1 100644
+index 5d0b425..7158a81 100644
 --- a/modules/llm/embeddings.py
 +++ b/modules/llm/embeddings.py
-@@ -644,9 +644,10 @@ def _llama_cpp():
+@@ -736,9 +736,10 @@ def _llama_cpp():
      if module is None:
          raise deps.DependencyError(
              "LLM Embedding Model needs llama-cpp-python to read a .gguf file, and it is not "
