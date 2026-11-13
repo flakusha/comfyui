@@ -177,6 +177,11 @@ def test_sync_node_dry_run_reports_patched_node_at_pin(tmp_path, monkeypatch, ca
     assert deps.sync_node("work", pin) == c1
     assert (work / "a.txt").read_text(encoding="utf-8") == "patched\n"
     assert deps.sync_node("work", pin) == c1  # idempotent: stack already applied
+    assert "patches already applied (1 patch(es))" in capsys.readouterr().out
+    # the dry run must not claim it would apply a stack that is applied
+    capsys.readouterr()
+    assert deps.sync_node("work", pin, dry_run=True) == c1
+    assert "patches already applied (1 patch(es))" in capsys.readouterr().out
 
 
 def _patched_clone(tmp_path, monkeypatch, *, a_content="one\n", patch_from="one\n"):

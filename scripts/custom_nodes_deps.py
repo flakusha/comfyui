@@ -929,8 +929,8 @@ def _patch_state(repo: Path, files: list[Path]) -> tuple[bool, str | None]:
     return False, None
 
 
-def _patch_refusal(repo: Path, name: str, pin: NodePin) -> str | None:
-    """The refusal the real apply would hit for this node, or None.
+def _patch_refusal(repo: Path, name: str, pin: NodePin) -> tuple[bool, str | None]:
+    """(stack already applied, refusal the real apply would hit) for a node.
 
     Same decision the real path makes (missing patch file, dirt the stack
     does not explain, a stack that does not apply at the pinned ref, a
@@ -940,9 +940,20 @@ def _patch_refusal(repo: Path, name: str, pin: NodePin) -> str | None:
     try:
         patch_files = _patch_files(name, pin)
     except SyncError as e:
-        return str(e)
-    _applied, refusal = _patch_state(repo, patch_files)
-    return refusal
+        return False, str(e)
+    return _patch_state(repo, patch_files)
+
+
+def _report_dry_patches(name: str, pin: NodePin, applied: bool) -> None:
+    """The dry run's per-node patch line, in the real run's wording.
+
+    A stack that is already applied is not applied again, so saying "would
+    apply" for it would misreport what the real run does.
+    """
+    if applied:
+        print(f"{name}: patches already applied ({len(pin.patches)} patch(es))")
+    else:
+        print(f"{name}: would apply {len(pin.patches)} patch(es))")
 
 
 def _undo_stack(repo: Path, files: list[Path]) -> str:
@@ -1318,7 +1329,7 @@ def sync_node(
                     # changes the declared stack does not explain; the dry
                     # run must report the same refusals (and exit non-zero)
                     # instead of claiming the node is settled
-                    err = _patch_refusal(repo, name, pin)
+                    applied, err = _patch_refusal(repo, name, pin)
                     if err:
                         print(
                             f"{name}: REFUSED: {err} (ref {pin.ref})", file=sys.stderr
@@ -1330,7 +1341,9 @@ def sync_node(
                     # refused node reports the refusal alone — as the real
                     # run does, which only warns on a successful apply
                     warn_base_drift(name, pin, target)
-                    print(f"{name}: would apply {len(pin.patches)} patch(es)")
+                    # the same wording the real run uses: a stack that is
+                    # already applied is not applied again
+                    _report_dry_patches(name, pin, applied)
                     # the ref is not moving: the node already sits at its pin,
                     # so hand back the resolved hash and let the caller count
                     # it as "at pin" (the stack is applied or would apply)
