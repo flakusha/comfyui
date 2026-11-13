@@ -62,7 +62,8 @@
 #        `sync --dry-run` reports the same refusals the real run hits (missing
 #        patch file, unexplained dirt, a stack that does not apply, a created
 #        file the clone cannot take, a stack that does not compile) and exits
-#        non-zero on them; it plans against a temp index and writes nothing.
+#        non-zero on them; it plans against a temp index and leaves the clone's
+#        index, worktree and refs untouched.
 #   patches_base optional commit hash (7-40 lowercase hex, or the literal
 #        "unknown") recording the upstream commit this node's patch stack
 #        was last known-good on. Written by the tooling, not by hand:
