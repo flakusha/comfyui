@@ -1129,7 +1129,10 @@ def sync_node(
                 if dry_run:
                     warn_base_drift(name, pin, target)
                     print(f"{name}: would apply {len(pin.patches)} patch(es)")
-                    return None
+                    # the ref is not moving: the node already sits at its pin,
+                    # so hand back the resolved hash and let the caller count
+                    # it as "at pin" (the stack is applied or would apply)
+                    return target
                 try:
                     patch_files = _patch_files(name, pin)
                     err = apply_patches(repo, name, patch_files)
