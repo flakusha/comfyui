@@ -43,9 +43,8 @@ dependencies = [
   "comfy-angle",
   "openai-whisper",
   # GGUF runtime support for the GGUF loader node packs (models/unet_gguf etc).
-  # ComfyUI-GGUF-Loader declares no [project.dependencies], and city96's
-  # ComfyUI-GGUF (previously the lock's sole gguf provider) was removed from the
-  # workspace, so the dependency is declared here to keep uv sync installing it.
+  # The CCTech fork (custom_nodes/ComfyUI-GGUF) declares no [project.dependencies],
+  # so the dependency is declared here to keep uv sync installing it.
   "gguf>=0.13.0",
 ]
 
@@ -389,11 +388,6 @@ members = ["custom_nodes/*"]
 # workspace and is installed by hand instead.
 exclude = [
   "custom_nodes/comfyui-impact-pack",
-  # city96's ComfyUI-GGUF removed from the dependency set: dormant since
-  # 2026-01-12 and a strict subset of the active ComfyUI-GGUF-Loader fork
-  # (same node keys, fork wins by load order). Directory stays on disk;
-  # exclusion just keeps uv from resolving it into the lock.
-  "custom_nodes/ComfyUI-GGUF",
 ]
 
 [tool.uv.sources]

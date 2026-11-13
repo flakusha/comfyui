@@ -113,7 +113,7 @@ ref = "main"
 patches = ["0001-pyproject-workspace-member.patch"]
 patches_base = "42ba59d7dec0bdafd80adce8bbe824744c8113de"
 
-[nodes.ComfyUI-GGUF-Loader]
+[nodes.ComfyUI-GGUF]
 url = "https://github.com/ChrisColeTech/ComfyUI-GGUF-Loader.git"
 ref = "main"
 

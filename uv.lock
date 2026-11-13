@@ -1901,7 +1901,7 @@ wheels = [
 [[package]]
 name = "comfyui-gguf-loader"
 version = "2.21.0"
-source = { virtual = "custom_nodes/ComfyUI-GGUF-Loader" }
+source = { virtual = "custom_nodes/ComfyUI-GGUF" }
 
 [[package]]
 name = "comfyui-h3-multishot"
