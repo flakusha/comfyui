@@ -913,12 +913,17 @@ def _stage_created(repo: Path, files: list[Path]) -> str | None:
     if proc.returncode == 0:
         return None
     detail = (proc.stderr or proc.stdout).strip()
+    # `git add` is not atomic: it can stage one path before failing on the
+    # next, so name only the paths that really did not reach the index
+    unstaged = [
+        p for p in created if not _git_out(repo, "ls-files", "--error-unmatch", p)
+    ]
     # undo the stack so the refusal leaves the clone at the pinned ref,
     # not half-converged
     note = _undo_stack(repo, files)
     return (
-        f"patch created file(s) could not be staged: {', '.join(created)}: "
-        f"{detail}{note}"
+        f"patch created file(s) could not be staged: "
+        f"{', '.join(unstaged or created)}: {detail}{note}"
     )
 
 
@@ -948,6 +953,9 @@ def apply_patches(repo: Path, name: str, files: list[Path]) -> str | None:
     the full stack applied — anything else is a refusal, never discarded.
     A stack that would fail partway is refused before the first hunk lands
     (temp-index dry-run), so a refusal never leaves a half-applied stack.
+    A file the stack CREATES is staged by name afterwards: an untracked file
+    is invisible to `git diff HEAD`, so the next sync would read the
+    worktree as the clean ref and apply the stack a second time.
     """
     already, refusal = _patch_state(repo, files)
     if already:
