@@ -354,6 +354,59 @@ def test_sync_node_dry_run_refusal_reports_no_drift_warning(
     assert "WARNING" not in err
 
 
+def test_sync_node_stages_only_what_the_stack_created(tmp_path, monkeypatch, capsys):
+    # a stack that creates a file AND edits a tracked one: only the created
+    # file is staged (the tracked edit stays unstaged, as before), and a
+    # created file in a subdirectory stages by its repo-relative path.
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _run("init", "-q", "-b", "main", cwd=seed)
+    (seed / "a.txt").write_text("one\n", encoding="utf-8")
+    _run("add", ".", cwd=seed)
+    _run("commit", "-qm", "c1", cwd=seed)
+    c1 = _rev(seed)
+    origin = tmp_path / "origin.git"
+    _run("clone", "--bare", "-q", str(seed), str(origin))
+    work = tmp_path / "work"
+    _run("clone", "-q", str(origin), str(work))
+    patches_dir = tmp_path / "patches"
+    (patches_dir / "work").mkdir(parents=True)
+    (patches_dir / "work" / "0001-mixed.patch").write_text(
+        "diff --git a/a.txt b/a.txt\n"
+        "--- a/a.txt\n"
+        "+++ b/a.txt\n"
+        "@@ -1 +1 @@\n"
+        "-one\n"
+        "+ONE\n"
+        "diff --git a/sub/dir/new.py b/sub/dir/new.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/sub/dir/new.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+VALUE = 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(deps, "CUSTOM_NODES_DIR", tmp_path)
+    monkeypatch.setattr(deps, "PATCHES_DIR", patches_dir)
+    pin = deps.NodePin(
+        url=str(origin), ref="main", patches=("0001-mixed.patch",), patches_base=c1
+    )
+    assert deps.sync_node("work", pin) == c1
+    porcelain = subprocess.run(
+        ["git", "-C", str(work), "status", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "A  sub/dir/new.py" in porcelain  # the created file is staged
+    assert " M a.txt" in porcelain  # the tracked edit is NOT staged
+    assert "A  a.txt" not in porcelain
+    # and the stack still reads as applied on the next sync
+    capsys.readouterr()
+    assert deps.sync_node("work", pin) == c1
+    assert "patches already applied (1 patch(es))" in capsys.readouterr().out
+
+
 def test_run_sync_manifest_dry_run_would_clone_exits_zero(tmp_path, monkeypatch, capsys):
     # a missing repo in dry-run is a plan summary ("would clone"), not a failure
     origin, _c1 = _make_origin(tmp_path)
