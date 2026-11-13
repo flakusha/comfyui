@@ -27,7 +27,8 @@ Subcommands:
            sync --stamp-patches-base NAME... settles NAME at its pinned ref
            (patch stack applied) and records the resolved commit as the
            node's patches_base: the upstream commit the stack was last
-           known-good on.
+           known-good on. sync --dry-run prints the plan for the whole
+           sync and leaves each clone's index, worktree and refs untouched.
 """
 
 from __future__ import annotations
