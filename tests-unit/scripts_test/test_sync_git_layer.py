@@ -147,6 +147,38 @@ def test_sync_node_head_offset_and_tag_detaches(git_repos, monkeypatch):
     assert _sync(git_repos, monkeypatch, "v1") == git_repos.c1
 
 
+def test_sync_node_dry_run_reports_patched_node_at_pin(tmp_path, monkeypatch, capsys):
+    # a patch-declared node already at its pin is "at pin" in the dry run: it
+    # is neither a planned clone/move nor a refusal, and the real run lands the
+    # stack on top of the pinned ref without touching the ref itself.
+    # Owns only its own tmp_path: origin.git, the clone and the patch stack;
+    # CUSTOM_NODES_DIR/PATCHES_DIR are redirected per test and restored.
+    origin, c1 = _make_origin(tmp_path)
+    work = tmp_path / "work"
+    _run("clone", "-q", str(origin), str(work))
+    patches_dir = tmp_path / "patches"
+    (patches_dir / "work").mkdir(parents=True)
+    (patches_dir / "work" / "0001-a.txt.patch").write_text(
+        "diff --git a/a.txt b/a.txt\n"
+        "--- a/a.txt\n"
+        "+++ b/a.txt\n"
+        "@@ -1 +1 @@\n"
+        "-one\n"
+        "+patched\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(deps, "CUSTOM_NODES_DIR", tmp_path)
+    monkeypatch.setattr(deps, "PATCHES_DIR", patches_dir)
+    pin = deps.NodePin(
+        url=str(origin), ref="main", patches=("0001-a.txt.patch",), patches_base=c1
+    )
+    assert deps.sync_node("work", pin, dry_run=True) == c1
+    assert "would apply 1 patch(es)" in capsys.readouterr().out
+    assert deps.sync_node("work", pin) == c1
+    assert (work / "a.txt").read_text(encoding="utf-8") == "patched\n"
+    assert deps.sync_node("work", pin) == c1  # idempotent: stack already applied
+
+
 def test_run_sync_manifest_dry_run_would_clone_exits_zero(tmp_path, monkeypatch, capsys):
     # a missing repo in dry-run is a plan summary ("would clone"), not a failure
     origin, _c1 = _make_origin(tmp_path)
