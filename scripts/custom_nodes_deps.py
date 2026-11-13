@@ -856,6 +856,89 @@ def _patch_refusal(repo: Path, name: str, pin: NodePin) -> str | None:
     return refusal
 
 
+def _undo_stack(repo: Path, files: list[Path]) -> str:
+    """Undo an applied stack, leaving exactly the pinned ref's tree.
+
+    `git reset --hard` restores the tracked files and drops a created file
+    the stack had staged; `git clean` removes the created files that were
+    still untracked, plus the __pycache__ the compile check wrote. Returns
+    a note naming what was removed.
+    """
+    stale = [
+        p for f in files for p in _patch_new_files(f) if (repo / p).exists()
+    ]
+    stale += sorted(
+        str(d.relative_to(repo))
+        for d in {(repo / p).parent / "__pycache__" for p in _patch_paths(files)}
+        if d.is_dir()
+    )
+    _git_run(repo, "reset", "--hard", "HEAD")
+    # only the paths that survived the reset are still there to clean
+    leftover = [p for p in stale if (repo / p).exists()]
+    if leftover:
+        # -x as well: a created file the clone ignores would otherwise
+        # survive the cleanup and leave the node half-converged
+        subprocess.run(
+            ["git", "-C", str(repo), "clean", "-fdx", "--", *leftover],
+            capture_output=True,
+        )
+    removed = [p for p in stale if not (repo / p).exists()]
+    if not stale:
+        return ""
+    return (
+        f"; removed {', '.join(removed)}"
+        if removed
+        else f"; {', '.join(stale)} still present in the worktree"
+    )
+
+
+def _stage_created(repo: Path, files: list[Path]) -> str | None:
+    """Stage the files a stack creates; an error message or None.
+
+    `git apply` leaves a created file untracked, and an untracked file is
+    invisible to `git diff HEAD`: the next sync would read the worktree as
+    "stack not applied" and apply the stack again, which fails with
+    "already exists in working directory". Staging what the stack created
+    puts it in the clone's index, which is the state the unwind in
+    _patches_applied expects (and the state a `git reset --hard` removes).
+    """
+    created = [p for f in files for p in _patch_new_files(f)]
+    if not created:
+        return None
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "add", "--", *created],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 0:
+        return None
+    detail = (proc.stderr or proc.stdout).strip()
+    # undo the stack so the refusal leaves the clone at the pinned ref,
+    # not half-converged
+    note = _undo_stack(repo, files)
+    return (
+        f"patch created file(s) could not be staged: {', '.join(created)}: "
+        f"{detail}{note}"
+    )
+
+
+def _compile_check(repo: Path, files: list[Path]) -> str | None:
+    """Compile the .py files the stack touches; an error message or None.
+
+    A stack that lands a file Python cannot parse is refused, and the stack
+    is undone, so the clone is left exactly at the pinned ref's tree.
+    """
+    for path in sorted(_patch_paths(files)):
+        if not path.endswith(".py") or not (repo / path).is_file():
+            continue
+        try:
+            py_compile.compile(str(repo / path), doraise=True)
+        except py_compile.PyCompileError as e:
+            note = _undo_stack(repo, files)
+            return f"patched file failed to compile: {path}: {e}{note}"
+    return None
+
+
 def apply_patches(repo: Path, name: str, files: list[Path]) -> str | None:
     """Converge the worktree onto ref + declared patches; an error message or None.
 
@@ -879,38 +962,12 @@ def apply_patches(repo: Path, name: str, files: list[Path]) -> str | None:
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip()
             return f"patch failed to apply: {f.name}: {detail}"
-    for path in sorted(_patch_paths(files)):
-        if not path.endswith(".py") or not (repo / path).is_file():
-            continue
-        try:
-            py_compile.compile(str(repo / path), doraise=True)
-        except py_compile.PyCompileError as e:
-            # the stack landed on a clean worktree: reset undoes the tracked
-            # edits; clean also removes files this stack created (a reset
-            # leaves those untracked) and any __pycache__ the compile check
-            # wrote, so the refusal leaves exactly the pinned ref's tree
-            _git_run(repo, "reset", "--hard", "HEAD")
-            stale = [
-                p for f in files for p in _patch_new_files(f) if (repo / p).exists()
-            ]
-            stale += sorted(
-                str(d.relative_to(repo))
-                for d in {(repo / p).parent / "__pycache__" for p in _patch_paths(files)}
-                if d.is_dir()
-            )
-            note = ""
-            if stale:
-                subprocess.run(
-                    ["git", "-C", str(repo), "clean", "-fd", "--", *stale],
-                    capture_output=True,
-                )
-                removed = [p for p in stale if not (repo / p).exists()]
-                note = (
-                    f"; removed {', '.join(removed)}"
-                    if removed
-                    else f"; {', '.join(stale)} still present in the worktree"
-                )
-            return f"patched file failed to compile: {path}: {e}{note}"
+    err = _stage_created(repo, files)
+    if err:
+        return err
+    err = _compile_check(repo, files)
+    if err:
+        return err
     print(f"{name}: applied {len(files)} patch(es)")
     return None
 

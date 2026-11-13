@@ -266,6 +266,68 @@ def test_sync_node_dry_run_refuses_unexplained_worktree_dirt(
     assert (node.work / "a.txt").read_text(encoding="utf-8") == "dirty\n"
 
 
+def _creating_patched_clone(tmp_path, monkeypatch):
+    """origin + clone at main, with a stack that CREATES b.txt.
+
+    The clone sits at the pinned ref, so the sync plan is "ok" and the patch
+    stack decides whether the node settles or refuses. CUSTOM_NODES_DIR and
+    PATCHES_DIR are redirected here and restored by monkeypatch.
+    """
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _run("init", "-q", "-b", "main", cwd=seed)
+    (seed / "a.txt").write_text("one\n", encoding="utf-8")
+    _run("add", ".", cwd=seed)
+    _run("commit", "-qm", "c1", cwd=seed)
+    c1 = _rev(seed)
+    origin = tmp_path / "origin.git"
+    _run("clone", "--bare", "-q", str(seed), str(origin))
+    work = tmp_path / "work"
+    _run("clone", "-q", str(origin), str(work))
+    patches_dir = tmp_path / "patches"
+    (patches_dir / "work").mkdir(parents=True)
+    (patches_dir / "work" / "0001-b.txt.patch").write_text(
+        "diff --git a/b.txt b/b.txt\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/b.txt\n"
+        "@@ -0,0 +1 @@\n"
+        "+created\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(deps, "CUSTOM_NODES_DIR", tmp_path)
+    monkeypatch.setattr(deps, "PATCHES_DIR", patches_dir)
+    pin = deps.NodePin(
+        url=str(origin), ref="main", patches=("0001-b.txt.patch",), patches_base=c1
+    )
+    return SimpleNamespace(origin=origin, work=work, c1=c1, pin=pin)
+
+
+def test_sync_node_stack_creating_a_file_converges_and_is_idempotent(
+    tmp_path, monkeypatch, capsys
+):
+    # a stack that CREATES a file: the apply path must stage what it created,
+    # because an untracked file is invisible to `git diff HEAD` — the next
+    # sync would read the worktree as "stack not applied" and apply the
+    # stack again, which fails with "already exists in working directory".
+    node = _creating_patched_clone(tmp_path, monkeypatch)
+    assert deps.sync_node("work", node.pin) == node.c1
+    assert (node.work / "b.txt").read_text(encoding="utf-8") == "created\n"
+    # idempotent: the next syncs see the stack as applied and change nothing
+    for _ in range(2):
+        capsys.readouterr()
+        assert deps.sync_node("work", node.pin) == node.c1
+        assert "patches already applied (1 patch(es))" in capsys.readouterr().out
+    assert _rev(node.work) == node.c1
+    # the created file is staged: the clone's index records the stack
+    assert "A  b.txt" in subprocess.run(
+        ["git", "-C", str(node.work), "status", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
 def test_run_sync_manifest_dry_run_would_clone_exits_zero(tmp_path, monkeypatch, capsys):
     # a missing repo in dry-run is a plan summary ("would clone"), not a failure
     origin, _c1 = _make_origin(tmp_path)
