@@ -259,8 +259,19 @@ dependencies = [
 "onnx-rocm" = ["onnx", "onnxruntime-rocm"]
 "onnx-gpu" = ["onnx", "onnxruntime-gpu"]
 
-# SageAttention v1 only — pure-python wheel, no compiled kernels, runs on the ROCm triton backend.
-# v2+ requires an nvcc/CUDA toolchain so is deliberately excluded.
+# SageAttention v1 — pure-python wheel, no compiled kernels: its triton kernels
+# run on the ROCm triton backend here and on PyPI triton under the cuda extra,
+# so `--extra sage` serves both stacks (no torch bound, no markers — it resolves
+# in every conflict fork). Core's `--use-sage-attention` imports the same
+# `sageattn` module on either backend.
+# Deliberately v1 only: v2/v3 live outside PyPI (thu-ml/SageAttention git tree /
+# community-built wheels; needs nvcc, and Blackwell for v3 — core's `sageattn3`
+# import has no uv provider). flash-attn is out too (PyPI sdist-only, no cu130
+# cp312 wheel on any index; the cu130 `flash_attn_3` wheels export
+# `flash_attn_3`/`flash_attn_interface`, not core's `flash_attn` module), as is
+# xformers (the current 0.0.35 line allows torch>=2.10 but ships no cp312 CUDA
+# wheel — py39-none tag only, sdist fallback needs nvcc; the older cu130 abi3
+# lines pin torch==2.9.0/2.10.0 exactly and cannot co-install with 2.14.1).
 "sage" = ["sageattention==1.0.6"]
 
 # llama-cpp-python GPU flavor selector for the GGUF node packs (was `LLM GGUF
