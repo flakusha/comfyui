@@ -245,7 +245,10 @@ dependencies = [
   # not PyPI (whose triton-xpu caps at 3.3.0b1): listed directly because uv
   # resolves index sources for direct requirements only, and torch's own
   # `triton-xpu>=3.8` requirement would otherwise fall through to PyPI.
-  "triton-xpu==3.8.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  # Same marker as the torch pin: torch's transitive dep must be routed to the
+  # xpu index on every platform the xpu torch wheel targets, not just linux —
+  # otherwise win32 resolution falls through to PyPI's capped 3.3.0b1.
+  "triton-xpu==3.8.0; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
 ]
 
 "manager" = ["comfyui_manager>=4.2.2"]
