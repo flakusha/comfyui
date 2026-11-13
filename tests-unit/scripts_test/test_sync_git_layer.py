@@ -328,6 +328,32 @@ def test_sync_node_stack_creating_a_file_converges_and_is_idempotent(
     ).stdout
 
 
+def test_sync_node_dry_run_refusal_reports_no_drift_warning(
+    tmp_path, monkeypatch, capsys
+):
+    # a refusing node reports the refusal ALONE: the real run only warns
+    # about a drifted patches_base on a successful apply, so a dry run that
+    # warns first reports a state the real run never reaches.
+    node = _patched_clone(tmp_path, monkeypatch)
+    (node.work / "a.txt").write_text("dirty\n", encoding="utf-8")
+    drifted = deps.NodePin(
+        url=node.pin.url,
+        ref=node.pin.ref,
+        patches=node.pin.patches,
+        patches_base="deadbeef",
+    )
+    assert deps.sync_node("work", drifted, dry_run=True) is None
+    err = capsys.readouterr().err
+    assert "REFUSED" in err
+    assert "WARNING" not in err
+    assert "patches_base" not in err
+    # the real run refuses it too, and warns about nothing
+    assert deps.sync_node("work", drifted) is None
+    err = capsys.readouterr().err
+    assert "REFUSED" in err
+    assert "WARNING" not in err
+
+
 def test_run_sync_manifest_dry_run_would_clone_exits_zero(tmp_path, monkeypatch, capsys):
     # a missing repo in dry-run is a plan summary ("would clone"), not a failure
     origin, _c1 = _make_origin(tmp_path)

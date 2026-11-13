@@ -1216,7 +1216,6 @@ def sync_node(
         if plan.verb == "ok":
             if pin.patches:
                 if dry_run:
-                    warn_base_drift(name, pin, target)
                     # the real run refuses here when the stack does not
                     # apply at the pinned ref, or when the worktree holds
                     # changes the declared stack does not explain; the dry
@@ -1230,6 +1229,10 @@ def sync_node(
                         if refusals is not None:
                             refusals.add(name)
                         return None
+                    # the drift warning follows the refusal check, so a
+                    # refused node reports the refusal alone — as the real
+                    # run does, which only warns on a successful apply
+                    warn_base_drift(name, pin, target)
                     print(f"{name}: would apply {len(pin.patches)} patch(es)")
                     # the ref is not moving: the node already sits at its pin,
                     # so hand back the resolved hash and let the caller count
