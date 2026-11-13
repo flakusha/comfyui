@@ -51,11 +51,13 @@
 #        stack resets it first and re-applies after convergence. Patchless
 #        nodes keep the plain dirty-worktree refusal unchanged.
 #        A patch may also CREATE a file (a /dev/null pre-image): the file is
-#        then new in the clone, and the tooling's unwind stages it by name (see
-#        _patches_applied in scripts/custom_nodes_deps.py), so it has to end up
-#        staged in the clone's index — that is the state sync reads as "stack
-#        already applied". A ref move under an applied stack recreates such a
-#        file unstaged, so it must be staged again.
+#        then new in the clone, and the tooling stages what the stack created
+#        (git add -- the created paths) after applying it, so the clone's index
+#        holds the created file — the state sync reads as "stack already
+#        applied". A ref move under an applied stack resets the stack and
+#        re-applies it, which recreates and re-stages the file: no manual step.
+#        A created file that cannot be staged is a loud refusal; the tooling
+#        undoes the stack, leaving the clone at the pinned ref.
 #   patches_base optional commit hash (7-40 lowercase hex, or the literal
 #        "unknown") recording the upstream commit this node's patch stack
 #        was last known-good on. Written by the tooling, not by hand:
@@ -65,14 +67,18 @@
 #        re-stamp deliberately). A plain `sync` also auto-stamps after a
 #        successful apply, unless the recorded base is a real SHA and the
 #        upstream move touched a patched file — that case keeps the manual
-#        review cycle with a WARNING naming the files to diff. At sync time
-#        a base that differs from the resolved ref is a WARNING naming both SHAs — drift is expected
-#        (patches apply fine across nearby commits; git apply validates the
-#        hunks against whatever tree they land on) — never a refusal; the
-#        base exists so a future ref move starts from a known-good point
-#        instead of guesswork. Requires patches. Pre-existing stacks whose
-#        original base was never recorded stay without the field (absent =
-#        silent); "unknown" is the explicit form of the same admission.
+#        review cycle with a WARNING naming both SHAs and the files to
+#        diff. A recorded base that is not reachable in the clone is not
+#        stamped either: the move cannot be checked against the patched
+#        files, so it keeps the manual cycle with a WARNING naming the base
+#        and the resolved ref. Drift between the recorded base and the
+#        resolved ref is expected (patches apply fine across nearby commits;
+#        git apply validates the hunks against whatever tree they land on) —
+#        never a refusal; the base exists so a future ref move starts from a
+#        known-good point instead of guesswork. Requires patches. Pre-existing
+#        stacks whose original base was never recorded stay without the field
+#        (absent = silent); "unknown" is the explicit form of the same
+#        admission.
 #
 # Behavior: an existing clone already at the pinned ref is left untouched;
 # a wrong ref is fetched and checked out; a dirty worktree (uncommitted
