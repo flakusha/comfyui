@@ -819,6 +819,43 @@ def _patches_applied(repo: Path, files: list[Path]) -> bool:
         return bool(tree) and tree == _git_out(repo, "rev-parse", "HEAD^{tree}")
 
 
+def _patch_state(repo: Path, files: list[Path]) -> tuple[bool, str | None]:
+    """(stack already applied, refusal message) for the current worktree.
+
+    The single source of truth for "would the real apply refuse this node":
+    a dirty worktree the declared stack does not explain, and a stack that
+    does not apply at the pinned ref, are both refusals. Every check runs on
+    a temp index, so this is safe to call inside a dry run — it never
+    touches the worktree or the clone's index.
+    """
+    if _git_out(repo, "diff", "HEAD"):
+        if _patches_applied(repo, files):
+            return True, None
+        return False, (
+            "dirty worktree changes are not explained by the declared patches; "
+            "commit/stash them, or reset to the pinned ref and re-run"
+        )
+    err = _stack_applies(repo, files)
+    if err:
+        return False, f"patch stack failed dry-run at {err}; worktree untouched"
+    return False, None
+
+
+def _patch_refusal(repo: Path, name: str, pin: NodePin) -> str | None:
+    """The refusal the real apply would hit for this node, or None.
+
+    Same decision the real path makes (missing patch file, dirt the stack
+    does not explain, a stack that does not apply at the pinned ref), but
+    every check runs on a temp index and nothing is written.
+    """
+    try:
+        patch_files = _patch_files(name, pin)
+    except SyncError as e:
+        return str(e)
+    _applied, refusal = _patch_state(repo, patch_files)
+    return refusal
+
+
 def apply_patches(repo: Path, name: str, files: list[Path]) -> str | None:
     """Converge the worktree onto ref + declared patches; an error message or None.
 
@@ -829,17 +866,12 @@ def apply_patches(repo: Path, name: str, files: list[Path]) -> str | None:
     A stack that would fail partway is refused before the first hunk lands
     (temp-index dry-run), so a refusal never leaves a half-applied stack.
     """
-    if _git_out(repo, "diff", "HEAD"):
-        if _patches_applied(repo, files):
-            print(f"{name}: patches already applied ({len(files)} patch(es))")
-            return None
-        return (
-            "dirty worktree changes are not explained by the declared patches; "
-            "commit/stash them, or reset to the pinned ref and re-run"
-        )
-    err = _stack_applies(repo, files)
-    if err:
-        return f"patch stack failed dry-run at {err}; worktree untouched"
+    already, refusal = _patch_state(repo, files)
+    if already:
+        print(f"{name}: patches already applied ({len(files)} patch(es))")
+        return None
+    if refusal:
+        return refusal
     for f in files:
         proc = subprocess.run(
             ["git", "-C", str(repo), "apply", str(f)], capture_output=True, text=True
@@ -1128,6 +1160,19 @@ def sync_node(
             if pin.patches:
                 if dry_run:
                     warn_base_drift(name, pin, target)
+                    # the real run refuses here when the stack does not
+                    # apply at the pinned ref, or when the worktree holds
+                    # changes the declared stack does not explain; the dry
+                    # run must report the same refusals (and exit non-zero)
+                    # instead of claiming the node is settled
+                    err = _patch_refusal(repo, name, pin)
+                    if err:
+                        print(
+                            f"{name}: REFUSED: {err} (ref {pin.ref})", file=sys.stderr
+                        )
+                        if refusals is not None:
+                            refusals.add(name)
+                        return None
                     print(f"{name}: would apply {len(pin.patches)} patch(es)")
                     # the ref is not moving: the node already sits at its pin,
                     # so hand back the resolved hash and let the caller count

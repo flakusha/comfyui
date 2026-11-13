@@ -179,6 +179,93 @@ def test_sync_node_dry_run_reports_patched_node_at_pin(tmp_path, monkeypatch, ca
     assert deps.sync_node("work", pin) == c1  # idempotent: stack already applied
 
 
+def _patched_clone(tmp_path, monkeypatch, *, a_content="one\n", patch_from="one\n"):
+    """origin + clone at main, with a one-hunk patch stack declared for "work".
+
+    The clone sits at the pinned ref, so the sync plan is "ok" and the patch
+    stack decides whether the node settles or refuses. CUSTOM_NODES_DIR and
+    PATCHES_DIR are redirected here and restored by monkeypatch.
+    """
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _run("init", "-q", "-b", "main", cwd=seed)
+    (seed / "a.txt").write_text(a_content, encoding="utf-8")
+    _run("add", ".", cwd=seed)
+    _run("commit", "-qm", "c1", cwd=seed)
+    c1 = _rev(seed)
+    origin = tmp_path / "origin.git"
+    _run("clone", "--bare", "-q", str(seed), str(origin))
+    work = tmp_path / "work"
+    _run("clone", "-q", str(origin), str(work))
+    patches_dir = tmp_path / "patches"
+    (patches_dir / "work").mkdir(parents=True)
+    (patches_dir / "work" / "0001-a.txt.patch").write_text(
+        "diff --git a/a.txt b/a.txt\n"
+        "--- a/a.txt\n"
+        "+++ b/a.txt\n"
+        "@@ -1 +1 @@\n"
+        f"-{patch_from}"
+        "+patched\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(deps, "CUSTOM_NODES_DIR", tmp_path)
+    monkeypatch.setattr(deps, "PATCHES_DIR", patches_dir)
+    pin = deps.NodePin(
+        url=str(origin), ref="main", patches=("0001-a.txt.patch",), patches_base=c1
+    )
+    manifest = tmp_path / "m.toml"
+    manifest.write_text(
+        f'[nodes.work]\nurl = "{origin}"\nref = "main"\n'
+        'patches = ["0001-a.txt.patch"]\n',
+        encoding="utf-8",
+    )
+    return SimpleNamespace(origin=origin, work=work, c1=c1, pin=pin, manifest=manifest)
+
+
+def test_sync_node_dry_run_refuses_patch_stack_that_cannot_apply(
+    tmp_path, monkeypatch, capsys
+):
+    # the pinned ref moved so the stack no longer applies: the real sync
+    # REFUSES this node, so the dry run must refuse it too — naming the node
+    # and the failing patch — and must not count it as "at pin".
+    node = _patched_clone(tmp_path, monkeypatch, a_content="two\n")
+    assert deps.sync_node("work", node.pin, dry_run=True) is None
+    err = capsys.readouterr().err
+    assert "work: REFUSED" in err
+    assert "0001-a.txt.patch" in err
+    # the real run refuses the same node, with the same exit code the dry
+    # run uses (run_sync_manifest returns 1 on any refusal)
+    assert deps.run_sync_manifest(node.manifest, dry_run=True) == 1
+    out = capsys.readouterr().out
+    assert "0 at pin" in out
+    assert "1 refused" in out
+    assert deps.run_sync_manifest(node.manifest) == 1
+    # nothing was written: the clone still sits at the pinned ref, untouched
+    assert _rev(node.work) == node.c1
+    assert (node.work / "a.txt").read_text(encoding="utf-8") == "two\n"
+
+
+def test_sync_node_dry_run_refuses_unexplained_worktree_dirt(
+    tmp_path, monkeypatch, capsys
+):
+    # the worktree holds changes the declared stack does not explain: the
+    # real sync REFUSES this node, so the dry run must refuse it too and
+    # must not count it as "at pin".
+    node = _patched_clone(tmp_path, monkeypatch)
+    (node.work / "a.txt").write_text("dirty\n", encoding="utf-8")
+    assert deps.sync_node("work", node.pin, dry_run=True) is None
+    err = capsys.readouterr().err
+    assert "work: REFUSED" in err
+    assert "not explained by the declared patches" in err
+    assert deps.run_sync_manifest(node.manifest, dry_run=True) == 1
+    out = capsys.readouterr().out
+    assert "0 at pin" in out
+    assert "1 refused" in out
+    assert deps.run_sync_manifest(node.manifest) == 1
+    # the dry run wrote nothing: the dirt is still exactly as it was
+    assert (node.work / "a.txt").read_text(encoding="utf-8") == "dirty\n"
+
+
 def test_run_sync_manifest_dry_run_would_clone_exits_zero(tmp_path, monkeypatch, capsys):
     # a missing repo in dry-run is a plan summary ("would clone"), not a failure
     origin, _c1 = _make_origin(tmp_path)
