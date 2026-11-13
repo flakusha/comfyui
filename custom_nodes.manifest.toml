@@ -92,6 +92,8 @@ patches_base = "e5d5307959fe6cba86c35eecb05a897dbd4f2748"
 [nodes.ComfyUI-DeGrid]
 url = "https://github.com/lunaaispace-eng/ComfyUI-DeGrid.git"
 ref = "main"
+patches = ["0001-pyproject-workspace-member.patch"]
+patches_base = "42ba59d7dec0bdafd80adce8bbe824744c8113de"
 
 [nodes.ComfyUI-GGUF-Loader]
 url = "https://github.com/ChrisColeTech/ComfyUI-GGUF-Loader.git"
@@ -117,6 +119,8 @@ ref = "master"
 [nodes.ComfyUI-MiniMaxH3_LatentUpscaler]
 url = "https://github.com/Tr1dae/ComfyUI-MiniMaxH3_LatentUpscaler"
 ref = "main"
+patches = ["0001-pyproject-workspace-member.patch"]
+patches_base = "895e3c471164423f0ea0e8eaf45eb701efe641ae"
 
 [nodes.ComfyUI-QwenVL]
 url = "https://github.com/1038lab/ComfyUI-QwenVL"

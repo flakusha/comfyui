@@ -1,0 +1,11 @@
+diff --git a/pyproject.toml b/pyproject.toml
+new file mode 100644
+index 0000000..9a7c3cf
+--- /dev/null
++++ b/pyproject.toml
+@@ -0,0 +1,5 @@
++[project]
++name = "ComfyUI-MiniMaxH3_LatentUpscaler"
++description = "Minimax Latent Upscaler"
++version = "0.1.0"
++license = { file = "LICENSE" }
