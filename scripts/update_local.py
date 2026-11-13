@@ -60,6 +60,7 @@ from typing import Literal
 from local_common import (
     REPO_ROOT,
     VENV_DIR,
+    detect_gpu,
     fail,
     run_cmd,
     run_quietly,
@@ -68,10 +69,19 @@ from local_common import (
 )
 
 BACKUP_REF = "refs/pre-rebase-backup"
-BASE_EXTRAS: tuple[str, ...] = ("rocm", "manager", "dev")
+BASE_EXTRAS: tuple[str, ...] = ("rocm-arch-gfx1100", "manager", "dev")
 # torch resolves through conflicting uv forks (pyproject [tool.uv].conflicts);
-# both extras together can never sync.
-HARDWARE_EXTRAS = frozenset({"rocm", "cuda", "cpu"})
+# two hardware extras together can never sync. The ROCm entries are per-arch
+# (`rocm-arch-<target>`), each a full self-contained stack, plus the union
+# `rocm-arch-all` (every curated arch, for mixed-gfx boxes); cuda/cpu/xpu are
+# single-track. `rocm` as a bare extra no longer exists.
+HARDWARE_EXTRAS = frozenset({
+    "rocm-arch-gfx1100", "rocm-arch-gfx1101", "rocm-arch-gfx1151",
+    "rocm-arch-gfx1200", "rocm-arch-gfx1201",
+    "rocm-arch-gfx942", "rocm-arch-gfx950",
+    "rocm-arch-all",
+    "cuda", "cpu", "xpu",
+})
 # llama-cpp-python GPU flavor selector (pyproject llama-* extras): exactly one
 # flavor extra per sync, same exclusivity rule as the torch hardware extras.
 # Independent of HARDWARE_EXTRAS — `llama-rocm` (hipcc source build) never
@@ -150,7 +160,7 @@ def parse_args(argv: list[str] | None = None) -> Options:
 
     extras = tuple(args.extra)
     if sum(name in HARDWARE_EXTRAS for name in extras) > 1:
-        parser.error("--extra rocm, --extra cuda, and --extra cpu are mutually exclusive")
+        parser.error("hardware extras are mutually exclusive (one rocm-arch-*, cuda, cpu, or xpu per sync)")
     if sum(name in LLAMA_EXTRAS for name in extras) > 1:
         parser.error("--extra llama-vulkan, --extra llama-cuda, --extra llama-rocm, and --extra llama-cpu are mutually exclusive")
     return Options(
@@ -468,9 +478,25 @@ def sync_cmd(extra_names: tuple[str, ...]) -> list[str]:
     """uv sync command: repo .venv, --inexact (keep custom-node packages),
     base extras plus any --extra passthrough."""
     cmd = ["uv", "sync", "--python", str(venv_python()), "--inexact"]
-    for name in (*BASE_EXTRAS, *extra_names):
+    for name in (*resolve_base_extras(extra_names), *extra_names):
         cmd.extend(["--extra", name])
     return cmd
+
+
+def resolve_base_extras(extra_names: tuple[str, ...]) -> tuple[str, ...]:
+    """Base extras with hardware auto-detection folded in.
+
+    Explicit --extra wins: a passed hardware extra is the stack, no pairing.
+    With none, detect this machine (a rocm-arch-*, cuda, xpu, or cpu extra).
+    macOS ARM64 has no torch extra — PyPI default, no hardware extra.
+    """
+    hardware = next((n for n in extra_names if n in HARDWARE_EXTRAS), "")
+    if hardware:
+        base = [hardware]
+    else:
+        detected_hw, _detected_arch = detect_gpu()
+        base = [detected_hw] if detected_hw else ["rocm-arch-gfx1100"]
+    return tuple([*base, "manager", "dev"])
 
 
 def run_sync(extra_names: tuple[str, ...]) -> None:

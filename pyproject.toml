@@ -50,7 +50,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-"rocm" = [
+# ROCm hardware extras are per-arch (`rocm-arch-<target>`): each is the full
+# stack for one AMD gfx target — torch + torchvision + triton + bitsandbytes +
+# split rocm runtime + that target's device kernels. `rocm-arch-all` is the
+# union of the curated arches for mixed-GPU boxes (e.g. gfx11xx + gfx12xx in
+# one machine) and replaces any single-arch extra. Exactly one per sync;
+# `device-all` is deliberately NOT used (~28 torch + ~24 vision + ~20 SDK wheels).
+# uv lock resolves every extra into conflicting forks (see [tool.uv].conflicts),
+# so each arch extra is independently satisfiable next to cuda/cpu/xpu.
+"rocm-arch-gfx1100" = [
+  # RX 7900 XT / XTX (RDNA3). Default arch: this machine's only GPU.
   # ROCm wheels exist only for linux x86_64; gated so other platforms resolve from PyPI.
   # torchaudio is not a dependency at all (#16457): core has zero torchaudio imports,
   # and an installed CUDA torchaudio breaks transformers imports under ROCm.
@@ -75,17 +84,137 @@ dependencies = [
   # through to PyPI, whose only `rocm` is an unrelated 0.1.0 placeholder. 10.1.0 is the SDK
   # build the 2.14.0+rocm10.1.0 pair ships against; `rocm` itself is sdist-only on AMD's
   # index, so its dependencies are declared statically in [[tool.uv.dependency-metadata]].
-  # Device kernels are scoped to gfx1100: this machine's only GPU is an RX 7900 XTX.
   "rocm==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "rocm-sdk-core==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "rocm-sdk-libraries==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "rocm-sdk-device-gfx1100==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "amd-torch-device-gfx1100==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
-  # The gfx1100 leaf does not depend on the gfx110x family wheel (upstream packaging bug
+  # The gfx1100 torch leaf omits the gfx110x family wheel (upstream packaging bug
   # pytorch/pytorch#194498); without it the AOTriton fused-SDPA kernel images are missing
-  # and every fused SDPA launch raises hipErrorInvalidImage.
+  # and every fused SDPA launch raises hipErrorInvalidImage — hence the direct pin.
   "amd-torch-device-gfx110x==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
   "amd-torchvision-device-gfx1100==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+"rocm-arch-gfx1101" = [
+  # RX 7800 XT / 7700 XT (RDNA3, gfx1101 + gfx110x family). Same stack as gfx1100;
+  # comments there apply.
+  "torch==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torchvision==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "triton==3.8.0+git669b31ac.rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "bitsandbytes>=0.50.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-core==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-libraries==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx1101==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx1101==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx110x==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx1101==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+"rocm-arch-gfx1151" = [
+  # Ryzen AI Max / Max+ (Strix Halo, gfx1151 + gfx115x family). Same stack; comments at gfx1100 apply.
+  "torch==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torchvision==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "triton==3.8.0+git669b31ac.rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "bitsandbytes>=0.50.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-core==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-libraries==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx1151==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx1151==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx115x==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx1151==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+"rocm-arch-gfx1200" = [
+  # RX 9060 / XT (RDNA4, gfx1200 + gfx12-0 family). Same stack; comments at gfx1100 apply.
+  "torch==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torchvision==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "triton==3.8.0+git669b31ac.rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "bitsandbytes>=0.50.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-core==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-libraries==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx1200==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx1200==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx12-0==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx1200==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+"rocm-arch-gfx1201" = [
+  # RX 9070 / XT (RDNA4, gfx1201 + gfx12-0 family). Same stack; comments at gfx1100 apply.
+  "torch==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torchvision==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "triton==3.8.0+git669b31ac.rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "bitsandbytes>=0.50.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-core==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-libraries==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx1201==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx1201==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx12-0==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx1201==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+"rocm-arch-gfx942" = [
+  # MI300 datacenter (gfx942, no family wheel). Same stack; comments at gfx1100 apply.
+  "torch==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torchvision==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "triton==3.8.0+git669b31ac.rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "bitsandbytes>=0.50.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-core==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-libraries==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx942==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx942==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx942==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+"rocm-arch-gfx950" = [
+  # MI325 datacenter (gfx950, no family wheel). Same stack; comments at gfx1100 apply.
+  "torch==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torchvision==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "triton==3.8.0+git669b31ac.rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "bitsandbytes>=0.50.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-core==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-libraries==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx950==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx950==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx950==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+"rocm-arch-all" = [
+  # Mixed-GPU boxes: the union of every curated single-arch stack above, for
+  # machines with more than one gfx target installed (e.g. gfx11xx + gfx12xx
+  # in one box). Same pins as the singles; duplicates resolve once, so the
+  # sync carries every arch's device kernels. Gfx1036 and other legacy targets
+  # are not curated — extend the singles and mirror the rows here if needed.
+  "torch==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "torchvision==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "triton==3.8.0+git669b31ac.rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "bitsandbytes>=0.50.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-core==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-libraries==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx1100==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx1101==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx1151==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx1200==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx1201==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx942==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "rocm-sdk-device-gfx950==10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx1100==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx1101==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx110x==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx1151==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx115x==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx1200==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx12-0==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx1201==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx942==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torch-device-gfx950==2.14.0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx1100==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx1101==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx1151==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx1200==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx1201==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx942==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "amd-torchvision-device-gfx950==0.29.0a0+rocm10.1.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 "cuda" = [
@@ -103,6 +232,21 @@ dependencies = [
   # CPU-only torch from PyTorch's own cpu index; the index carries this cp314
   # manylinux wheel. Linux x86_64 only — other platforms keep the PyPI torch.
   "torch==2.14.1+cpu; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+"xpu" = [
+  # Intel Arc / Data Center GPU (torch.xpu): linux x86_64 and Windows; other
+  # platforms fall back to the PyPI torch. 2.14.1+xpu matches the cuda track;
+  # torchvision 0.29.1+xpu exists for the same pair on the xpu index.
+  "torch==2.14.1+xpu; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
+  "torchvision==0.29.1+xpu; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
+  # torch-xpu pulls its triton fork itself (pytorch-triton-xpu on the xpu
+  # index); no explicit pin — PyPI's `triton-xpu` caps at 3.3.0b1 and cannot
+  # satisfy torch 2.14.1+xpu's floor.
+  # torch-xpu's triton fork (dist name `triton-xpu`) lives on the xpu index,
+  # not PyPI (whose triton-xpu caps at 3.3.0b1): listed directly because uv
+  # resolves index sources for direct requirements only, and torch's own
+  # `triton-xpu>=3.8` requirement would otherwise fall through to PyPI.
+  "triton-xpu==3.8.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 "manager" = ["comfyui_manager>=4.2.2"]
@@ -222,7 +366,7 @@ index-strategy = "unsafe-best-match"
 # conflicting forks the lock and makes `uv sync --extra rocm --extra cuda` fail loudly
 # instead of silently picking one index.
 conflicts = [
-  [{ extra = "rocm" }, { extra = "cuda" }, { extra = "cpu" }],
+  [{ extra = "rocm-arch-gfx1100" }, { extra = "rocm-arch-gfx1101" }, { extra = "rocm-arch-gfx1151" }, { extra = "rocm-arch-gfx1200" }, { extra = "rocm-arch-gfx1201" }, { extra = "rocm-arch-gfx942" }, { extra = "rocm-arch-gfx950" }, { extra = "rocm-arch-all" }, { extra = "cuda" }, { extra = "cpu" }, { extra = "xpu" }],
 
   [{ extra = "onnx-cpu" }, { extra = "onnx-gpu" }, { extra = "onnx-rocm" }],
 
@@ -258,19 +402,42 @@ exclude = [
 # `conflicts` below makes uv resolve rocm and cuda in separate forks, so exactly one of
 # these entries applies per fork.
 torch = [
-  { index = "amd-rocm", extra = "rocm", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1100", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1101", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1151", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1200", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1201", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx942", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx950", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-all", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
   { index = "torch-cuda", extra = "cuda", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')" },
   { index = "torch-cpu", extra = "cpu", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "torch-xpu", extra = "xpu", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')" },
 ]
 torchvision = [
-  { index = "amd-rocm", extra = "rocm", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1100", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1101", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1151", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1200", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1201", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx942", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx950", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-all", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
   { index = "torch-cuda", extra = "cuda", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')" },
+  { index = "torch-xpu", extra = "xpu", marker = "(sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')" },
 ]
 # AMD ships its triton build under the plain `triton` name; the rocm extra lists triton
 # directly so this extra-scoped source applies (InvokeAI's pattern). Only the rocm fork
 # takes it; cuda and the no-extra resolution keep PyPI's triton.
 triton = [
-  { index = "amd-rocm", extra = "rocm", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1100", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1101", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1151", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1200", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx1201", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx942", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-gfx950", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
+  { index = "amd-rocm", extra = "rocm-arch-all", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
 ]
 # Index sources apply to direct requirements only — a transitive dep never sees these
 # entries, which is why the rocm extra lists the whole rocm family by name. These entries
@@ -280,9 +447,32 @@ rocm = { index = "amd-rocm" }
 rocm-sdk-core = { index = "amd-rocm" }
 rocm-sdk-libraries = { index = "amd-rocm" }
 rocm-sdk-device-gfx1100 = { index = "amd-rocm" }
+rocm-sdk-device-gfx1101 = { index = "amd-rocm" }
+rocm-sdk-device-gfx1151 = { index = "amd-rocm" }
+rocm-sdk-device-gfx1200 = { index = "amd-rocm" }
+rocm-sdk-device-gfx1201 = { index = "amd-rocm" }
+rocm-sdk-device-gfx942 = { index = "amd-rocm" }
+rocm-sdk-device-gfx950 = { index = "amd-rocm" }
 amd-torch-device-gfx1100 = { index = "amd-rocm" }
+amd-torch-device-gfx1101 = { index = "amd-rocm" }
 amd-torch-device-gfx110x = { index = "amd-rocm" }
+amd-torch-device-gfx1151 = { index = "amd-rocm" }
+amd-torch-device-gfx115x = { index = "amd-rocm" }
+amd-torch-device-gfx12-0 = { index = "amd-rocm" }
+amd-torch-device-gfx1200 = { index = "amd-rocm" }
+amd-torch-device-gfx1201 = { index = "amd-rocm" }
+amd-torch-device-gfx942 = { index = "amd-rocm" }
+amd-torch-device-gfx950 = { index = "amd-rocm" }
 amd-torchvision-device-gfx1100 = { index = "amd-rocm" }
+amd-torchvision-device-gfx1101 = { index = "amd-rocm" }
+amd-torchvision-device-gfx1151 = { index = "amd-rocm" }
+amd-torchvision-device-gfx1200 = { index = "amd-rocm" }
+amd-torchvision-device-gfx1201 = { index = "amd-rocm" }
+amd-torchvision-device-gfx942 = { index = "amd-rocm" }
+amd-torchvision-device-gfx950 = { index = "amd-rocm" }
+# torch-xpu's triton fork (dist name `triton-xpu`) lives on the xpu index,
+# not PyPI (whose triton-xpu caps at 3.3.0b1).
+triton-xpu = { index = "torch-xpu" }
 
 [[tool.uv.index]]
 name = "pypi"
@@ -296,6 +486,11 @@ explicit = true
 [[tool.uv.index]]
 name = "torch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "torch-xpu"
+url = "https://download.pytorch.org/whl/xpu"
 explicit = true
 
 [[tool.uv.index]]

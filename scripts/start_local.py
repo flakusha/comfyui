@@ -19,9 +19,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from glob import glob
 from pathlib import Path
 
-from local_common import REPO_ROOT, run_quietly, venv_python
+from local_common import REPO_ROOT, detect_gpu, run_quietly, venv_python
 
 # Fixed argument block, verbatim from start-local.sh (commented-out entries kept).
 FIXED_ARGS: list[str] = [
@@ -46,9 +47,14 @@ def main(argv: list[str] | None = None) -> int:
     os.chdir(REPO_ROOT)
     extra = list(sys.argv[1:] if argv is None else argv)
     env = dict(os.environ)
-    env["ROCR_VISIBLE_DEVICES"] = (
-        "0"  # pin to gfx1100 dGPU; iGPU gfx1036 disables comfy-kitchen WMMA via capability intersection
-    )
+    hardware, _arch = detect_gpu()
+    if hardware is not None and hardware.startswith("rocm-arch") and hardware != "rocm-arch-all" and "ROCR_VISIBLE_DEVICES" not in env:
+        # Prefer the dGPU: on mixed iGPU+dGPU boxes (e.g. gfx1036 + gfx1100)
+        # the iGPU disables comfy-kitchen WMMA via capability intersection.
+        # Explicit env wins; detection only supplies the default.
+        render_nodes = sorted(glob("/dev/dri/renderD*"))
+        if len(render_nodes) > 1:
+            env["ROCR_VISIBLE_DEVICES"] = "0"
     # WAS Node Suite pip-installs missing deps at import, uninstalling opencv-python first —
     # which deletes files shared with opencv-python-headless. This venv has no pip anyway,
     # so let it skip rather than let a missing dep take the whole pack down.
