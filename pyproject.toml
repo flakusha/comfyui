@@ -255,7 +255,7 @@ dependencies = [
 
 # ONNX runtime backends. Exactly one of these may be enabled at a time: all three
 # distributions ship the same `onnxruntime` module, so two installed together
-# shadow each other. Always sync with your hardware extra (--extra rocm,
+# shadow each other. Always sync with your hardware extra (--extra rocm-arch-gfx1100,
 # --extra cuda, or --extra cpu) alongside the backend extra so the resolver keeps matching
 # torch wheels; the hardware extras are mutually exclusive and cannot be combined.
 "onnx-cpu" = ["onnx", "onnxruntime"]
@@ -376,7 +376,7 @@ package = false
 index-strategy = "unsafe-best-match"
 # torch/torchvision resolve to different wheels per GPU extra (see [tool.uv.sources]), so
 # uv cannot put them in one resolution. Declaring them as
-# conflicting forks the lock and makes `uv sync --extra rocm --extra cuda` fail loudly
+# conflicting forks the lock and makes `uv sync --extra rocm-arch-gfx1100 --extra cuda` fail loudly
 # instead of silently picking one index.
 conflicts = [
   [{ extra = "rocm-arch-gfx1100" }, { extra = "rocm-arch-gfx1101" }, { extra = "rocm-arch-gfx1151" }, { extra = "rocm-arch-gfx1200" }, { extra = "rocm-arch-gfx1201" }, { extra = "rocm-arch-gfx942" }, { extra = "rocm-arch-gfx950" }, { extra = "rocm-arch-all" }, { extra = "cuda" }, { extra = "cpu" }, { extra = "xpu" }],
