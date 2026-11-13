@@ -56,8 +56,13 @@
 #        holds the created file — the state sync reads as "stack already
 #        applied". A ref move under an applied stack resets the stack and
 #        re-applies it, which recreates and re-stages the file: no manual step.
-#        A created file that cannot be staged is a loud refusal; the tooling
-#        undoes the stack, leaving the clone at the pinned ref.
+#        A created file the clone cannot take (a path its .gitignore covers, or
+#        a path the worktree already holds) is a loud refusal BEFORE the stack
+#        is applied: the clone stays exactly at the pinned ref, nothing staged.
+#        `sync --dry-run` reports the same refusals the real run hits (missing
+#        patch file, unexplained dirt, a stack that does not apply, a created
+#        file the clone cannot take, a stack that does not compile) and exits
+#        non-zero on them; it plans against a temp index and writes nothing.
 #   patches_base optional commit hash (7-40 lowercase hex, or the literal
 #        "unknown") recording the upstream commit this node's patch stack
 #        was last known-good on. Written by the tooling, not by hand:

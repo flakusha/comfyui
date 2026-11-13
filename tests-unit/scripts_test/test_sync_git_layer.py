@@ -330,6 +330,116 @@ def test_sync_node_stack_creating_a_file_converges_and_is_idempotent(
     ).stdout
 
 
+def _one_node_manifest(tmp_path, origin, node="work"):
+    manifest = tmp_path / "m.toml"
+    manifest.write_text(
+        f'[nodes.{node}]\nurl = "{origin}"\nref = "main"\n'
+        'patches = ["0001-b.txt.patch"]\n',
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def test_sync_node_dry_run_and_real_refuse_a_created_file_the_clone_ignores(
+    tmp_path, monkeypatch, capsys
+):
+    # a stack that creates a file the clone's .gitignore covers: `git add`
+    # refuses it, so the real sync REFUSES the node — the dry run must
+    # refuse it too (same exit code), and neither run may touch the clone.
+    # Owns only its own tmp_path: origin.git, the clone and the patch stack;
+    # CUSTOM_NODES_DIR/PATCHES_DIR are redirected per test and restored.
+    node = _creating_patched_clone(tmp_path, monkeypatch)
+    (node.work / ".gitignore").write_text("b.txt\n", encoding="utf-8")
+    manifest = _one_node_manifest(tmp_path, node.origin)
+    assert deps.run_sync_manifest(manifest, dry_run=True) == 1
+    err = capsys.readouterr().err
+    assert "work: REFUSED" in err
+    assert "could not be staged" in err
+    assert deps.run_sync_manifest(manifest) == 1
+    err = capsys.readouterr().err
+    assert "work: REFUSED" in err
+    assert "could not be staged" in err
+    # the clone sits at the pinned ref, untouched: nothing applied, nothing staged
+    assert _rev(node.work) == node.c1
+    assert not (node.work / "b.txt").exists()
+    assert subprocess.run(
+        ["git", "-C", str(node.work), "diff", "--cached", "--name-only"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout == ""
+
+
+def test_sync_node_dry_run_and_real_refuse_a_created_file_that_already_exists(
+    tmp_path, monkeypatch, capsys
+):
+    # a stack that creates a file the worktree already holds (untracked):
+    # `git apply` refuses it, so the real sync REFUSES the node — the dry
+    # run must refuse it too, and neither run may touch the clone.
+    node = _creating_patched_clone(tmp_path, monkeypatch)
+    (node.work / "b.txt").write_text("mine\n", encoding="utf-8")
+    manifest = _one_node_manifest(tmp_path, node.origin)
+    assert deps.run_sync_manifest(manifest, dry_run=True) == 1
+    err = capsys.readouterr().err
+    assert "work: REFUSED" in err
+    assert "already exist in the working directory" in err
+    assert deps.run_sync_manifest(manifest) == 1
+    err = capsys.readouterr().err
+    assert "work: REFUSED" in err
+    assert "already exist in the working directory" in err
+    # the untracked file is the user's, not the stack's: untouched, unstaged
+    assert (node.work / "b.txt").read_text(encoding="utf-8") == "mine\n"
+    assert _rev(node.work) == node.c1
+
+
+def test_sync_node_dry_run_and_real_refuse_a_stack_that_does_not_compile(
+    tmp_path, monkeypatch, capsys
+):
+    # a stack that lands a .py file Python cannot parse: the real sync
+    # REFUSES it (the compile check), so the dry run must refuse it too.
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _run("init", "-q", "-b", "main", cwd=seed)
+    (seed / "a.py").write_text("ok = 1\n", encoding="utf-8")
+    _run("add", ".", cwd=seed)
+    _run("commit", "-qm", "c1", cwd=seed)
+    c1 = _rev(seed)
+    origin = tmp_path / "origin.git"
+    _run("clone", "--bare", "-q", str(seed), str(origin))
+    work = tmp_path / "work"
+    _run("clone", "-q", str(origin), str(work))
+    patches_dir = tmp_path / "patches"
+    (patches_dir / "work").mkdir(parents=True)
+    (patches_dir / "work" / "0001-a.py.patch").write_text(
+        "diff --git a/a.py b/a.py\n"
+        "--- a/a.py\n"
+        "+++ b/a.py\n"
+        "@@ -1 +1 @@\n"
+        "-ok = 1\n"
+        "+def broken(:\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(deps, "CUSTOM_NODES_DIR", tmp_path)
+    monkeypatch.setattr(deps, "PATCHES_DIR", patches_dir)
+    manifest = tmp_path / "m.toml"
+    manifest.write_text(
+        f'[nodes.work]\nurl = "{origin}"\nref = "main"\n'
+        'patches = ["0001-a.py.patch"]\n',
+        encoding="utf-8",
+    )
+    assert deps.run_sync_manifest(manifest, dry_run=True) == 1
+    err = capsys.readouterr().err
+    assert "work: REFUSED" in err
+    assert "failed to compile" in err
+    assert deps.run_sync_manifest(manifest) == 1
+    err = capsys.readouterr().err
+    assert "work: REFUSED" in err
+    assert "failed to compile" in err
+    # the clone sits at the pinned ref, untouched
+    assert _rev(work) == c1
+    assert (work / "a.py").read_text(encoding="utf-8") == "ok = 1\n"
+
+
 def test_sync_node_dry_run_refusal_reports_no_drift_warning(
     tmp_path, monkeypatch, capsys
 ):

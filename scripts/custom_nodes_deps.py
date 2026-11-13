@@ -683,6 +683,16 @@ def _git_out(repo: Path, *args: str) -> str:
     return proc.stdout if proc.returncode == 0 else ""
 
 
+def _git_bytes(repo: Path, *args: str) -> bytes:
+    """git stdout inside a repo as raw bytes, or b'' on failure.
+
+    Byte-exact: a patched .py file may declare a non-UTF-8 encoding, and
+    Python's compiler has to see the bytes to honour that declaration.
+    """
+    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+    return proc.stdout if proc.returncode == 0 else b""
+
+
 def _git_rc(repo: Path, *args: str) -> bool:
     """True when git exits 0 inside a repo. Existence probes run --quiet, so
     the exit code — not stdout — carries the answer."""
@@ -772,16 +782,17 @@ def _patch_paths(files: list[Path]) -> set[str]:
     return paths
 
 
-def _stack_applies(repo: Path, files: list[Path]) -> str | None:
+def _stack_applies(repo: Path, files: list[Path]) -> tuple[str | None, str | None]:
     """Simulate the whole stack on a temp index seeded from HEAD, touching
-    nothing; the first failing patch's name + stderr, or None when every
-    patch applies. `apply --cached` stages a patch's created files itself,
-    so no worktree pre-staging is needed (unlike the unwind in
-    _patches_applied, which starts from a dirty worktree)."""
+    nothing; (first failing patch's name + stderr, None) when every patch
+    applies, else (None, the tree the applied stack produced).
+    `apply --cached` stages a patch's created files itself, so no worktree
+    pre-staging is needed (unlike the unwind in _patches_applied, which
+    starts from a dirty worktree)."""
     with tempfile.NamedTemporaryFile(suffix=".index") as idx:
         env = {**os.environ, "GIT_INDEX_FILE": idx.name}
         if not _git_env_rc(repo, env, "read-tree", "HEAD"):
-            return "could not seed a temp index from HEAD"
+            return "could not seed a temp index from HEAD", None
         for f in files:
             proc = subprocess.run(
                 ["git", "-C", str(repo), "apply", "--cached", str(f)],
@@ -791,8 +802,9 @@ def _stack_applies(repo: Path, files: list[Path]) -> str | None:
             )
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout).strip()
-                return f"{f.name}: {detail}"
-    return None
+                return f"{f.name}: {detail}", None
+        tree = _git_env_out(repo, env, "write-tree").strip()
+    return None, (tree or None)
 
 
 def _patches_applied(repo: Path, files: list[Path]) -> bool:
@@ -819,13 +831,59 @@ def _patches_applied(repo: Path, files: list[Path]) -> bool:
         return bool(tree) and tree == _git_out(repo, "rev-parse", "HEAD^{tree}")
 
 
+def _created_file_refusal(repo: Path, files: list[Path]) -> str | None:
+    """The refusal a file the stack CREATES would cause, or None.
+
+    A created file has to end up in the clone's index, so `git add` has to
+    accept it: a path the clone ignores is refused by `git add`, and a path
+    that already sits in the worktree is refused by `git apply`. Both end
+    the real apply in a refusal, so both are refused here too — before the
+    stack is applied, which leaves the clone exactly at the pinned ref.
+    """
+    created = [p for f in files for p in _patch_new_files(f)]
+    ignored = [p for p in created if _git_rc(repo, "check-ignore", "-q", "--", p)]
+    if ignored:
+        return (
+            "patch created file(s) could not be staged: "
+            f"{', '.join(ignored)}: ignored by the clone's .gitignore"
+        )
+    existing = [p for p in created if (repo / p).exists()]
+    if existing:
+        return (
+            "patch failed to apply: created file(s) already exist in the "
+            f"working directory: {', '.join(existing)}"
+        )
+    return None
+
+
+def _compile_check_tree(repo: Path, files: list[Path], tree: str) -> str | None:
+    """Compile the .py files the stack touches, as the applied tree holds them.
+
+    The real apply compiles the patched files in the worktree; this compiles
+    the same content out of the temp index's tree, so both paths refuse a
+    stack that lands a file Python cannot parse.
+    """
+    for path in sorted(_patch_paths(files)):
+        if not path.endswith(".py"):
+            continue
+        blob = _git_bytes(repo, "show", f"{tree}:{path}")
+        if not blob:
+            continue
+        try:
+            compile(blob, path, "exec")
+        except SyntaxError as e:
+            return f"patched file failed to compile: {path}: {e}"
+    return None
+
+
 def _patch_state(repo: Path, files: list[Path]) -> tuple[bool, str | None]:
     """(stack already applied, refusal message) for the current worktree.
 
     The single source of truth for "would the real apply refuse this node":
-    a dirty worktree the declared stack does not explain, and a stack that
-    does not apply at the pinned ref, are both refusals. Every check runs on
-    a temp index, so this is safe to call inside a dry run — it never
+    a dirty worktree the declared stack does not explain, a stack that does
+    not apply at the pinned ref, a created file the clone cannot stage, and a
+    stack that lands a file Python cannot parse are all refusals. Every check
+    runs on a temp index, so this is safe to call inside a dry run — it never
     touches the worktree or the clone's index.
     """
     if _git_out(repo, "diff", "HEAD"):
@@ -835,9 +893,16 @@ def _patch_state(repo: Path, files: list[Path]) -> tuple[bool, str | None]:
             "dirty worktree changes are not explained by the declared patches; "
             "commit/stash them, or reset to the pinned ref and re-run"
         )
-    err = _stack_applies(repo, files)
+    err, tree = _stack_applies(repo, files)
     if err:
         return False, f"patch stack failed dry-run at {err}; worktree untouched"
+    refusal = _created_file_refusal(repo, files)
+    if refusal:
+        return False, refusal
+    if tree:
+        refusal = _compile_check_tree(repo, files, tree)
+        if refusal:
+            return False, refusal
     return False, None
 
 
@@ -845,7 +910,8 @@ def _patch_refusal(repo: Path, name: str, pin: NodePin) -> str | None:
     """The refusal the real apply would hit for this node, or None.
 
     Same decision the real path makes (missing patch file, dirt the stack
-    does not explain, a stack that does not apply at the pinned ref), but
+    does not explain, a stack that does not apply at the pinned ref, a
+    created file the clone cannot stage, a stack that does not compile), but
     every check runs on a temp index and nothing is written.
     """
     try:
