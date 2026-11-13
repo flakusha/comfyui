@@ -310,6 +310,8 @@ def test_sync_node_stack_creating_a_file_converges_and_is_idempotent(
     # because an untracked file is invisible to `git diff HEAD` — the next
     # sync would read the worktree as "stack not applied" and apply the
     # stack again, which fails with "already exists in working directory".
+    # Owns only its own tmp_path: origin.git, the clone and the patch stack;
+    # CUSTOM_NODES_DIR/PATCHES_DIR are redirected per test and restored.
     node = _creating_patched_clone(tmp_path, monkeypatch)
     assert deps.sync_node("work", node.pin) == node.c1
     assert (node.work / "b.txt").read_text(encoding="utf-8") == "created\n"
@@ -358,6 +360,8 @@ def test_sync_node_stages_only_what_the_stack_created(tmp_path, monkeypatch, cap
     # a stack that creates a file AND edits a tracked one: only the created
     # file is staged (the tracked edit stays unstaged, as before), and a
     # created file in a subdirectory stages by its repo-relative path.
+    # Owns only its own tmp_path: origin.git, the clone and the patch stack;
+    # CUSTOM_NODES_DIR/PATCHES_DIR are redirected per test and restored.
     seed = tmp_path / "seed"
     seed.mkdir()
     _run("init", "-q", "-b", "main", cwd=seed)
