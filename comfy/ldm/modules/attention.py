@@ -652,7 +652,7 @@ def _comfy_kitchen_int8_inputs(q, k, v, heads, mask, skip_reshape, enable_gqa):
 
 @wrap_attn
 def attention_comfy_kitchen_int8(q, k, v, heads, mask=None, attn_precision=None, skip_reshape=False, skip_output_reshape=False, **kwargs):
-    if kwargs.get("low_precision_attention", True) is False and q.dtype == torch.float32:
+    if kwargs.get("low_precision_attention", True) is False:
         return attention_pytorch(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape, skip_output_reshape=skip_output_reshape, **kwargs)
     q, k, v, mask, b, dim_head = _comfy_kitchen_int8_inputs(
         q, k, v, heads, mask, skip_reshape, kwargs.get("enable_gqa", False)
@@ -673,7 +673,7 @@ def _attention_comfy_kitchen_int8_containers(q, k, v, heads, mask=None, attn_pre
     q = q.take()
     k = k.take()
     v = v.take()
-    if kwargs.get("low_precision_attention", True) is False and q.dtype == torch.float32:
+    if kwargs.get("low_precision_attention", True) is False:
         return attention_pytorch(q, k, v, heads, mask=mask, attn_precision=attn_precision, skip_reshape=skip_reshape, skip_output_reshape=skip_output_reshape, **kwargs)
     q, k, v, mask, b, dim_head = _comfy_kitchen_int8_inputs(
         q, k, v, heads, mask, skip_reshape, kwargs.get("enable_gqa", False)
@@ -922,7 +922,12 @@ def attention_flash(q, k, v, heads, mask=None, attn_precision=None, skip_reshape
 
 optimized_attention = attention_basic
 
-if model_management.sage_attention_enabled():
+if COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE:
+    logging.info("Using Comfy Kitchen attention")
+    optimized_attention = attention_comfy_kitchen_int8
+elif model_management.comfy_kitchen_attention_enabled():
+    logging.warning("Comfy Kitchen attention is unavailable, falling back. Install a Comfy Kitchen build with attention support to use --use-ck-attention.")
+elif model_management.sage_attention_enabled():
     logging.info("Using sage attention")
     optimized_attention = attention_sage
 elif model_management.flash_attention_enabled():
@@ -941,14 +946,6 @@ else:
     else:
         logging.info("Using sub quadratic optimization for attention, if you have memory or speed issues try using: --use-split-cross-attention")
         optimized_attention = attention_sub_quad
-
-if model_management.comfy_kitchen_attention_enabled():
-    if COMFY_KITCHEN_INT8_ATTENTION_IS_AVAILABLE:
-        logging.info("Using Comfy Kitchen attention")
-        optimized_attention = attention_comfy_kitchen_int8
-    else:
-        logging.error("Comfy Kitchen attention is unavailable. Install a Comfy Kitchen build with attention support to use --use-ck-attention.")
-        exit(-1)
 
 optimized_attention_masked = optimized_attention
 
