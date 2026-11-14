@@ -68,7 +68,9 @@
 > `--dry-run`). Custom-node patches live in `custom_nodes_patches/` and are
 > re-applied by `scripts/custom_nodes_deps.py sync`; after verifying a patch
 > stack against a moved upstream ref, re-stamp with `custom_nodes_deps.py
-> sync --stamp-patches-base <node>`.
+> sync --stamp-patches-base <node>`. Patches for pip-installed packages
+> (e.g. qwen_tts, `SITE_PATCHES` in the script) sit in the same tree and are
+> re-applied by `custom_nodes_deps.py install`.
 
 ComfyUI is the AI creation engine for visual professionals who demand control over every model, every parameter, and every output. Its powerful and modular node graph interface empowers creatives to generate images, videos, 3D models, audio, and more...
 - ComfyUI natively supports the latest open-source state of the art models.

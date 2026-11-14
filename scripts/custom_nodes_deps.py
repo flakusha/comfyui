@@ -18,7 +18,8 @@ Safety invariants:
 
 Subcommands:
   audit    report missing/conflicting/OK packages
-  install  install missing packages (uv pip install)
+  install  install missing packages (uv pip install); converge site-packages
+           patches (SITE_PATCHES) after the audit
   sync     clone/checkout custom_nodes/* per custom_nodes.manifest.toml (git
            only, no packages). sync owns ref pinning for manifest-managed
            nodes and replaces ComfyUI-Manager's install/update for them;
@@ -35,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import py_compile
@@ -456,6 +458,119 @@ def install_missing(
     for r in post:
         r.declared_by = declared_by_map.get(r.package, [])
     return post
+
+
+# ---------------------------------------------------------------------------
+# Site-packages patches (pip-installed targets the git-clone stacks can't reach)
+# ---------------------------------------------------------------------------
+
+
+# (package, file relative to the package dir, patch under custom_nodes_patches/<package>/).
+# qwen_tts ships from custom-node deps (uv pip install), not the manifest, so
+# the sync patch stacks cannot reach it; `install` converges these after its
+# audit instead. A pip (re)install rewrites the file back to upstream and the
+# next `install` run re-applies — update_local.py runs install after every
+# sync, which is what makes the patch durable.
+SITE_PATCHES = [
+    (
+        "qwen_tts",
+        "core/tokenizer_25hz/vq/whisper_encoder.py",
+        "0001-silence-flash-attn-warning.patch",
+    ),
+]
+
+
+def apply_site_patches(dry_run: bool = False) -> bool:
+    """Converge SITE_PATCHES onto the installed packages; True when settled.
+
+    `git apply` runs repo-free, but from a subdirectory of this repo it
+    resolves patch paths against the repo root and silently IGNORES targets
+    outside that subdirectory — a no-op that still exits 0. So every call
+    runs from the repo root with --directory=<repo-relative package dir>:
+    the target is pinned exactly, and a package installed outside the
+    repository is refused up front instead of silently not patched.
+    """
+    ok = True
+    repo = PATCHES_DIR.parent
+    for package, rel, patch_name in SITE_PATCHES:
+        patch = PATCHES_DIR / package / patch_name
+        if not patch.is_file():
+            print(
+                f"{package}: ERROR: declared patch file not found: {patch}",
+                file=sys.stderr,
+            )
+            ok = False
+            continue
+        try:
+            spec = importlib.util.find_spec(package)
+        except (ImportError, ValueError):
+            spec = None
+        if spec is None or not spec.origin:
+            print(f"{package}: not installed; site patch skipped", file=sys.stderr)
+            continue
+        pkg_dir = Path(spec.origin).resolve().parent
+        target = os.path.relpath(pkg_dir, repo)
+        if target.startswith(".."):
+            print(
+                f"{package}: ERROR: installed outside this repository ({pkg_dir}); "
+                "git apply cannot reach it from the repo root",
+                file=sys.stderr,
+            )
+            ok = False
+            continue
+        base = ["git", "apply", f"--directory={target}"]
+        already = (
+            subprocess.run(
+                [*base, "--check", "--reverse", str(patch)],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+            ).returncode
+            == 0
+        )
+        if already:
+            print(f"{package}: site patch already applied ({patch_name})")
+            continue
+        probe = subprocess.run(
+            [*base, "--check", str(patch)], cwd=repo, capture_output=True, text=True
+        )
+        if probe.returncode != 0:
+            detail = (probe.stderr or probe.stdout).strip()
+            print(
+                f"{package}: ERROR: site patch failed dry-run: {patch_name}: {detail}",
+                file=sys.stderr,
+            )
+            ok = False
+            continue
+        if dry_run:
+            print(f"{package}: would apply site patch {patch_name}")
+            continue
+        proc = subprocess.run(
+            [*base, str(patch)], cwd=repo, capture_output=True, text=True
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip()
+            print(
+                f"{package}: ERROR: site patch failed to apply: {patch_name}: {detail}",
+                file=sys.stderr,
+            )
+            ok = False
+            continue
+        try:
+            py_compile.compile(str(pkg_dir / rel), doraise=True)
+        except py_compile.PyCompileError as e:
+            subprocess.run(
+                [*base, "--reverse", str(patch)], cwd=repo, capture_output=True, text=True
+            )
+            print(
+                f"{package}: ERROR: patched file failed to compile: {rel}: {e}; "
+                "site patch reverted",
+                file=sys.stderr,
+            )
+            ok = False
+            continue
+        print(f"{package}: applied site patch {patch_name}")
+    return ok
 
 
 # ---------------------------------------------------------------------------
@@ -1809,9 +1924,10 @@ def main() -> int:
                     f"  {r.package}: installed {r.installed_version}, "
                     f"need {r.specifier}"
                 )
+        site_ok = apply_site_patches(dry_run=True)
         if args.json:
             print_json(results)
-        return 0
+        return 0 if site_ok else 1
 
     # Actual install
     if missing:
@@ -1830,6 +1946,8 @@ def main() -> int:
                 f"need {r.specifier}"
             )
 
+    site_ok = apply_site_patches()
+
     if args.json:
         print_json(post_results)
     else:
@@ -1837,11 +1955,11 @@ def main() -> int:
         print("Post-install audit:")
         print_table(post_results)
 
-    # Exit 1 if still missing or conflict
+    # Exit 1 if still missing, conflict, or a site patch refused
     has_issues = any(r.status in ("missing", "conflict") for r in post_results)
     if not has_issues:
         save_dep_state(post_results)
-    return 1 if has_issues else 0
+    return 1 if has_issues or not site_ok else 0
 
 
 if __name__ == "__main__":
