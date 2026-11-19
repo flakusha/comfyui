@@ -1,0 +1,23 @@
+diff --git a/clipproj_pinning.py b/clipproj_pinning.py
+--- a/clipproj_pinning.py
++++ b/clipproj_pinning.py
+@@ -31,8 +31,17 @@ def _pinned_class(cls):
+     def model_unload(self, *args, **kwargs):
+         return False  # "freed nothing": ComfyUI moves on to the next model
+ 
+-    def partially_unload(self, *args, **kwargs):
+-        return 0
++    def partially_unload(self, device_to=None, memory_to_free=0, force_patch_weights=False):
++        # LoadedModel.model_unload (model_management 837-845) juge au montant
++        # rendu : rendu 0, il en deduit que le dechargement partiel ne suffit
++        # pas et appelle notre detach inert, puis renvoie True. free_memory
++        # sort alors l'entree de current_loaded_models en croyant liberer la
++        # place, alors que les poids sont toujours entiers sur la carte :
++        # residu fantome, jamais suivi ni jamais libere. Rendre la demande
++        # fait echouer le dechargement partiel, model_unload renvoie False,
++        # et l'entree reste ou elle est -- le gestionnaire ira vider les
++        # autres modeles, qui, eux, se laissent vraiment decharger.
++        return memory_to_free
+ 
+     def partially_unload_ram(self, *args, **kwargs):
+         return 0  # would push weights back to RAM: exactly what we prevent

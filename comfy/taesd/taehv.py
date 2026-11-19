@@ -218,3 +218,48 @@ class TAEHV(nn.Module):
                 x = x.unflatten(1, (-1, chunk_frames))[:, :, self.frames_to_trim:].flatten(1, 2)
                 return x[:, :-3 * self.t_upscale].movedim(2, 1)
         return x[:, self.frames_to_trim:].movedim(2, 1)
+
+
+class FlatTAE(nn.Module):
+    """Decode-only 2D tiny VAE stored as flat positional state-dict keys, e.g. the taeh3 preview
+    TAE ('1.weight', '9.conv.0.bias', ... with no 'encoder.'/'decoder.' prefixes). Indexed plain
+    convs and Blocks are rebuilt from their weights' shapes; the parameterless gaps in the index
+    sequence are the Clamp, ReLU and Upsample(scale 2) modules of the original Sequential."""
+    def __init__(self, sd):
+        super().__init__()
+        from comfy.taesd.taesd import Block
+        by_index = {}
+        for key, weight in sd.items():
+            head, _, rest = key.partition(".")
+            if not head.isdigit():
+                raise ValueError("unexpected key '%s' for a flat decoder-only tiny VAE" % key)
+            by_index.setdefault(int(head), {})[rest] = weight
+        modules = []
+        spatial_upscale = 1
+        for index in range(max(by_index) + 1):
+            entry = by_index.get(index)
+            if entry is None:
+                modules.append(Clamp() if index == 0 else nn.ReLU() if index == 2 else nn.Upsample(scale_factor=2))
+                if index not in (0, 2):
+                    spatial_upscale *= 2
+            elif "conv.0.weight" in entry:
+                weight = entry["conv.0.weight"]
+                modules.append(Block(weight.shape[1], weight.shape[0]))
+            elif "weight" in entry:
+                modules.append(conv(entry["weight"].shape[1], entry["weight"].shape[0], bias="bias" in entry))
+            else:
+                raise ValueError("unrecognized module at index %d in flat decoder-only tiny VAE: %s" % (index, sorted(entry)))
+        self.model = nn.Sequential(*modules)
+        self.latent_channels = self.model[1].weight.shape[1]
+        self.output_channels = self.model[-1].weight.shape[0]
+        self.spatial_upscale = spatial_upscale
+
+    def decode(self, x):
+        """[B, C, T, H, W] (or [B, T, C, H, W]) latents -> [B, C, T, H * s, W * s] pixels."""
+        if x.ndim == 4:
+            x = x.unsqueeze(2)  # [B, C, H, W] -> [B, C, 1, H, W]
+        if x.shape[1] != self.latent_channels:
+            x = x.movedim(1, 2)  # [B, T, C, H, W] -> [B, C, T, H, W]
+        b, c, t, h, w = x.shape
+        out = self.model(x.transpose(1, 2).reshape(-1, c, h, w))
+        return out.reshape(b, t, out.shape[1], out.shape[2], out.shape[3]).movedim(2, 1)

@@ -1,0 +1,207 @@
+# Declarative pins for the custom_nodes/* git checkouts, consumed by
+#   python scripts/custom_nodes_deps.py sync
+# The fork's tooling owns cloning and ref pinning for these nodes; this
+# replaces ComfyUI-Manager's install/update behavior, which stays out of the
+# loop for manifest-managed nodes. Once every node under custom_nodes/ is
+# listed here as a git clone, the "manager" extra in pyproject.toml can be
+# dropped (deliberately left in place for now).
+#
+# Format: one [nodes.<directory-name>] table per node.
+#   url  clone URL; the tool clones it as custom_nodes/<name> with remote
+#        "origin" (fetch/pull always go through origin)
+#   ref  what to check out, one of:
+#     latest     HEAD of origin's default branch at fetch time.
+#                Chosen over "newest tag" deliberately: most of these node
+#                repos rarely cut tags, so a tag-based latest would pin most
+#                nodes to stale or nonexistent tags. Resolution is still
+#                deterministic per fetch and recorded — sync echoes the full
+#                resolved hash for every node, and each clone's HEAD is that
+#                record. Pin a tag/hash when a node needs stability.
+#     master     a branch name: tracks origin/<branch> at fetch time; the
+#                local branch is fast-forwarded to it (diverged local commits
+#                are refused, never discarded)
+#     v1.2.3     a tag: detached checkout at the tagged commit (tags win over
+#                same-named branches)
+#     1a2b3c4d   a commit hash, 7-40 hex chars: detached checkout
+#     HEAD~5     N commits behind the remote default branch's HEAD at fetch
+#                time (resolved against origin's refs, never local state):
+#                detached checkout
+#   extras optional list of the node's pyproject.toml
+#        [project.optional-dependencies] group names to install — the
+#        custom-node equivalent of uv's --extra, since `uv sync` cannot
+#        enable a workspace member's extras. Names match PEP 503-normalized
+#        (doc_export honors doc-export); an extra the node's pyproject does
+#        not define is a hard error at audit/install time, never silently
+#        skipped. Extras take effect once the node is cloned — update_local.py
+#        syncs before installing, so a fresh checkout is covered in one run.
+#   patches optional ordered list of plain patch file names, relative to
+#        custom_nodes_patches/<directory-name>/ at the repo root (one
+#        subdirectory per node, mirroring the [nodes.<name>] key). Carries
+#        LOCAL changes on top of the pinned ref without local commits: each
+#        file is a plain `git format-diff`-style diff applied with `git apply`
+#        after the pinned ref is checked out (apply, not am — patches stay
+#        simple, committable-by-hand diffs that are trivial to regenerate
+#        against a moved ref). Applied in list order; a patch that fails —
+#        missing file, or a hunk upstream changed — is a loud error naming
+#        the node and patch file, never a silent skip. Idempotence model:
+#        on every sync the worktree must match either the clean pinned ref
+#        (then the stack is applied) or the ref with the full stack already
+#        applied (reverse-apply check; no re-apply) — any OTHER dirty state
+#        is refused loudly, never discarded, and a ref move under an applied
+#        stack resets it first and re-applies after convergence. Patchless
+#        nodes keep the plain dirty-worktree refusal unchanged.
+#        A patch may also CREATE a file (a /dev/null pre-image): the file is
+#        then new in the clone, and the tooling stages what the stack created
+#        (git add -- the created paths) after applying it, so the clone's index
+#        holds the created file — the state sync reads as "stack already
+#        applied". A ref move under an applied stack resets the stack and
+#        re-applies it, which recreates and re-stages the file: no manual step.
+#        A created file the clone cannot take (a path its .gitignore covers, or
+#        a path the worktree already holds) is a loud refusal BEFORE the stack
+#        is applied: the clone stays exactly at the pinned ref, nothing staged.
+#        `sync --dry-run` reports the same refusals the real run hits (missing
+#        patch file, unexplained dirt, a stack that does not apply, a created
+#        file the clone cannot take, a stack that does not compile) and exits
+#        non-zero on them; it plans against a temp index and leaves the clone's
+#        index, worktree and refs untouched.
+#   patches_base optional commit hash (7-40 lowercase hex, or the literal
+#        "unknown") recording the upstream commit this node's patch stack
+#        was last known-good on. Written by the tooling, not by hand:
+#        `python scripts/custom_nodes_deps.py sync --stamp-patches-base
+#        <node>` settles the node at its pinned ref with the stack applied
+#        and stamps the resolved SHA here (re-run it after moving a ref to
+#        re-stamp deliberately). A plain `sync` also auto-stamps after a
+#        successful apply, unless the recorded base is a real SHA and the
+#        upstream move touched a patched file — that case keeps the manual
+#        review cycle with a WARNING naming both SHAs and the files to
+#        diff. A recorded base that is not reachable in the clone is not
+#        stamped either: the move cannot be checked against the patched
+#        files, so it keeps the manual cycle with a WARNING naming the base
+#        and the resolved ref. Drift between the recorded base and the
+#        resolved ref is expected (patches apply fine across nearby commits;
+#        git apply validates the hunks against whatever tree they land on) —
+#        never a refusal; the base exists so a future ref move starts from a
+#        known-good point instead of guesswork. Requires patches. Pre-existing
+#        stacks whose original base was never recorded stay without the field
+#        (absent = silent); "unknown" is the explicit form of the same
+#        admission.
+#
+# Behavior: an existing clone already at the pinned ref is left untouched;
+# a wrong ref is fetched and checked out; a dirty worktree (uncommitted
+# changes to tracked files) is refused loudly, never discarded; a directory
+# that exists but is not a git clone is refused with a takeover hint.
+#
+# Ref changes affect what the [tool.uv.workspace] members (custom_nodes/*,
+# minus comfyui-impact-pack) resolve into uv.lock; update_local.py step 5
+# runs sync followed by the dependency install for exactly this reason.
+
+[nodes.ComfyUI-ClipProj]
+url = "https://github.com/nicolab28/ComfyUI-ClipProj"
+ref = "main"
+patches = ["0001-projection-tensors-heap-owned-clone.patch", "0002-pinned-partial-unload-keeps-accounting.patch"]
+patches_base = "c01ba8fb8f41b4f2094dbd0b185cdc238fb6134c"
+
+[nodes.ComfyUI-DaSiWa-Nodes]
+url = "https://github.com/darksidewalker/ComfyUI-DaSiWa-Nodes.git"
+ref = "main"
+patches = ["0001-continuity-analyze-cancel-on-client-disconnect.patch"]
+patches_base = "d90dd88f299a311fed72c3c97d1e54a51ecbb934"
+
+[nodes.ComfyUI-DeGrid]
+url = "https://github.com/lunaaispace-eng/ComfyUI-DeGrid.git"
+ref = "main"
+patches = ["0001-pyproject-workspace-member.patch"]
+patches_base = "42ba59d7dec0bdafd80adce8bbe824744c8113de"
+
+[nodes.ComfyUI-GGUF]
+url = "https://github.com/ChrisColeTech/ComfyUI-GGUF-Loader.git"
+ref = "main"
+
+[nodes.ComfyUI-H3-Multishot]
+url = "https://github.com/jlucasmcrell/ComfyUI-H3-Multishot"
+ref = "master"
+patches = [
+  "0001-probe-includes-keyframe-audio-latents.patch",
+  "0001-joyecho-llm-timeout-and-interrupt.patch",
+]
+patches_base = "d7d197709fc93c1afb125e3db1dfd4ac0ae28c60"
+
+[nodes.ComfyUI-Krea-Moodboards]
+url = "https://github.com/Andro-Meta/ComfyUI-Krea-Moodboards"
+ref = "main"
+
+[nodes.ComfyUI-KreaPhoton]
+url = "https://github.com/Kostik2702/ComfyUI-KreaPhoton.git"
+ref = "master"
+
+[nodes.ComfyUI-MiniMaxH3_LatentUpscaler]
+url = "https://github.com/Tr1dae/ComfyUI-MiniMaxH3_LatentUpscaler"
+ref = "main"
+patches = ["0001-pyproject-workspace-member.patch"]
+patches_base = "895e3c471164423f0ea0e8eaf45eb701efe641ae"
+
+[nodes.ComfyUI-QwenVL]
+url = "https://github.com/1038lab/ComfyUI-QwenVL"
+ref = "main"
+
+[nodes.RES4LYF]
+url = "https://github.com/ClownsharkBatwing/RES4LYF.git"
+ref = "main"
+
+[nodes.comfyui-easy-use]
+url = "https://github.com/yolain/ComfyUI-Easy-Use"
+ref = "main"
+patches = ["0001-cloud-api-timeouts.patch"]
+patches_base = "d08ce763bc28e952566ecda91235709aa3fc6bbb"
+
+[nodes.comfyui-impact-pack]
+url = "https://github.com/ltdrdata/ComfyUI-Impact-Pack"
+ref = "latest"
+
+[nodes.comfyui-kjnodes]
+url = "https://github.com/kijai/ComfyUI-KJNodes"
+ref = "latest"
+
+[nodes.comfyui-krea2edit]
+url = "https://github.com/lbouaraba/comfyui-krea2edit.git"
+ref = "main"
+
+[nodes.comfyui-spectrum-minimax-h3]
+url = "https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3"
+ref = "latest"
+
+[nodes.comfyui-videohelpersuite]
+url = "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
+ref = "main"
+
+[nodes.comfyui_llama_swap]
+url = "https://github.com/ai-joe-git/comfyui_llama_swap.git"
+ref = "main"
+patches = ["0001-null-content-graceful-error.patch"]
+patches_base = "0ae61519ad61ec7d54558ec4344cc7fa15a714ca"
+
+[nodes.rgthree-comfy]
+url = "https://github.com/rgthree/rgthree-comfy"
+ref = "latest"
+
+[nodes.was-node-suite-comfyui]
+url = "https://github.com/WASasquatch/was-node-suite-comfyui.git"
+ref = "main"
+# .docx/.odt/.pdf export on Save (python-docx, odfdo, xhtml2pdf); vector_stores stays opt-in.
+extras = ["document_export", "llm"]
+patches = ["0001-web-fetches-honor-base-path.patch", "0002-llm-gguf-gpu-backend-wording.patch", "0003-llm-seeds-stay-fixed-for-caching.patch"]
+patches_base = "fc956f10675a9f9d9f96263a146aaafd66255554"
+
+[nodes.comfyui-minimaxh3-director]
+url = "https://github.com/flakusha/ComfyUI-MiniMaxH3-Director.git"
+# Full fork: local work lives as real commits on the `local-patches` branch
+# (base a672c64 = `local` + turbo removal, the duration-override warning and
+# the connected-length field lock), pushed to the fork. The branch-name ref
+# tracks origin/local-patches, so sync fast-forwards the checkout after each
+# push and refuses if the checkout ever diverges. After upstream (`local`)
+# moves: rebase local-patches onto it, push, sync.
+ref = "local-patches"
+
+[nodes.comfyui-speed-sampler]
+url = "https://github.com/StanLukuvka/ComfyUI-SPEED-Sampler.git"
+ref = "main"
