@@ -1,0 +1,14 @@
+diff --git a/nodes.py b/nodes.py
+index 910fad2..6a7e641 100644
+--- a/nodes.py
++++ b/nodes.py
+@@ -99,6 +99,9 @@ class LlamaSwapClient:
+             )
+             r.raise_for_status()
+             full_text = r.json()["choices"][0]["message"]["content"]
++            if not isinstance(full_text, str):
++                # thinking models return "content": null with the answer in reasoning_content
++                raise ValueError(f"model returned no message content ({type(full_text).__name__})")
+         except Exception as exc:
+             err = f"[LlamaSwap ERROR] {exc}"
+             if unload_after_generate:

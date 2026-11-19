@@ -198,8 +198,8 @@ class Attention(nn.Module):
             q = q[0]
             k = k[0]
         else:
-            q = self.q_norm(q.view(s, self.heads, self.head_dim))
-            k = self.k_norm(k.view(s, self.heads, self.head_dim))
+            q = self.q_norm(q.view(s, self.heads, self.head_dim)).to(v.dtype)
+            k = self.k_norm(k.view(s, self.heads, self.head_dim)).to(v.dtype)
 
         q = AttentionTensorContainer(q.transpose(0, 1).unsqueeze(0))
         k = AttentionTensorContainer(k.transpose(0, 1).unsqueeze(0))
@@ -442,18 +442,23 @@ class PackedLayout:
                     row += n
                     cursor += 1.0
                 elif kind == "audio":
-                    rt = blk["ref_audio_t"]
+                    # rows follow the shipped latent - the same tensor _cond_audio_rows
+                    # packs; ref_audio_t only sets the time-axis span
+                    audio = blk.get("audio_latent")
+                    rt = audio.shape[-1] if audio is not None else 0
                     if rt > 0:
                         segments.append(("ref_audio", rt * 2))
                         pos.append(_audio_grid(cursor, rt, *target_audio_w))
                         audio_pos.append(torch.arange(row, row + rt * 2))
                         audio_update.append(torch.zeros(rt * 2, dtype=torch.bool))
                         row += rt * 2
-                    cursor += float(rt)
+                    cursor += float(blk["ref_audio_t"])
                 elif kind in ("video", "video_audio"):
                     # the block's audio rows pack immediately before its video
-                    # rows, both sharing the cursor origin
-                    rt = blk["ref_audio_t"]
+                    # rows, both sharing the cursor origin; rows follow the
+                    # shipped latent, ref_audio_t only sets the span
+                    audio = blk.get("audio_latent")
+                    rt = audio.shape[-1] if audio is not None else 0
                     vt = blk["latent_t"]
                     r_frame, r_w_grid = _frame_grid(blk["latent_h"], blk["latent_w"])
                     if rt > 0:
@@ -468,7 +473,7 @@ class PackedLayout:
                     img_pos.append(torch.arange(row, row + n))
                     img_update.append(torch.zeros(n, dtype=torch.bool))
                     row += n
-                    cursor += max(float(rt), sum(_video_t_spans(vt)))
+                    cursor += max(float(blk["ref_audio_t"]), sum(_video_t_spans(vt)))
 
         # target audio (none for the image model) then target video, always last
         if audio_t:
@@ -548,12 +553,6 @@ class MiniMaxH3Model(nn.Module):
             for _ in range(num_layers)])
         self.final_layer = FinalLayer(hidden_size, time_embed_dim, video_patch_dim, audio_latents_dim,
                                       final_norm_eps, **curve, pdd_steps=pdd_steps, dtype=dtype, device=device, operations=operations)
-
-    def preprocess_text_embeds(self, text_states):
-        """[B, L, text_dim] Qwen states -> [B, L, hidden] refined text embeds."""
-        if text_states.shape[-1] == self.hidden_size:
-            return text_states
-        return self.token_refiner(self.condition_proj(text_states[0])).unsqueeze(0)
 
     def rope_freqs(self, position_ids, device):
         # [S, 3] float64 -> [S, 96] fp32

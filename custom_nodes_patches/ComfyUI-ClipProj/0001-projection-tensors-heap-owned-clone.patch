@@ -1,0 +1,17 @@
+diff --git a/clipproj_projection.py b/clipproj_projection.py
+--- a/clipproj_projection.py
++++ b/clipproj_projection.py
+@@ -107,7 +107,12 @@ def load_projection(name):
+         return _CACHE[key]
+ 
+     if path.lower().endswith(".safetensors"):
+-        data = _load_safetensors(path)
++        # safetensors.load_file renvoie des tenseurs adossés au mmap du fichier.
++        # Le clone les détache : laissés tels quels, ils resteraient en cache
++        # (_CACHE, puis le _gpu de chaque ProjectedCLIP) bien après l'appel, et
++        # un fichier tronqué ou remplacé sous la mapping donne un bus error sans
++        # la moindre trace Python.
++        data = {k: v.clone() for k, v in _load_safetensors(path).items()}
+         with _safe_open(path, framework="pt") as f:
+             meta = f.metadata() or {}
+         for k, v in meta.items():

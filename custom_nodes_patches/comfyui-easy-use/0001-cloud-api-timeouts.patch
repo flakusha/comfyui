@@ -1,0 +1,56 @@
+diff --git a/py/libs/api/bizyair.py b/py/libs/api/bizyair.py
+index b7b4581..a868dc1 100644
+--- a/py/libs/api/bizyair.py
++++ b/py/libs/api/bizyair.py
+@@ -42,7 +42,7 @@ class BizyAIRAPI:
+         try:
+             data = json.dumps(payload).encode("utf-8")
+             req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+-            with urllib.request.urlopen(req) as response:
++            with urllib.request.urlopen(req, timeout=300) as response:
+                 response_data = response.read().decode("utf-8")
+             return response_data
+         except urllib.error.URLError as e:
+diff --git a/py/libs/api/fluxai.py b/py/libs/api/fluxai.py
+index eaaa4d4..c3dfa4e 100644
+--- a/py/libs/api/fluxai.py
++++ b/py/libs/api/fluxai.py
+@@ -40,7 +40,7 @@ class FluxAIAPI:
+             "prompt": text
+         }
+ 
+-        response = requests.post(url, json=json, headers=headers)
++        response = requests.post(url, json=json, headers=headers, timeout=300)
+         res = response.json()
+         if "error" in res:
+             return res['error']
+diff --git a/py/libs/api/stability.py b/py/libs/api/stability.py
+index 3b40db2..2524f01 100644
+--- a/py/libs/api/stability.py
++++ b/py/libs/api/stability.py
+@@ -105,6 +105,7 @@ class StabilityAPI:
+             headers={"authorization": f"{api_key}", "accept": "application/json"},
+             files=files,
+             data=data,
++            timeout=300,
+         )
+         if response.status_code == 200:
+             PromptServer.instance.send_sync('stable-diffusion-api-generate-succeed',{"model":model})
+@@ -130,7 +131,7 @@ class StabilityAPI:
+         if cache and name in self.user_info:
+             return self.user_info[name]
+         else:
+-            response = requests.get(url, headers={"Authorization": f"Bearer {api_key}"})
++            response = requests.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=30)
+             if response.status_code == 200:
+                 user_info = response.json()
+                 self.user_info[name] = user_info
+@@ -145,7 +146,7 @@ class StabilityAPI:
+         api_key = self.api_keys[self.api_current]['key']
+         response = requests.get(url, headers={
+             "Authorization": f"Bearer {api_key}"
+-        })
++        }, timeout=30)
+         if response.status_code == 200:
+             return response.json()
+         else:

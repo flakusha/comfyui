@@ -1,0 +1,23 @@
+diff --git a/h3_avbank_probe.py b/h3_avbank_probe.py
+index 8357aae..094b8ae 100644
+--- a/h3_avbank_probe.py
++++ b/h3_avbank_probe.py
+@@ -62,10 +62,14 @@ def _apply_merge_patch():
+         payload["cond_video_latents"] = (
+             [k["latent"] for k in kf if "latent" in k]
+             + [r["latent"] for r in refs if "latent" in r])
+-        # audio reference latents ride the same payload (Motion-Context's
+-        # timeline audio ref depends on this; harmless when absent)
+-        aud = [r["audio_latent"] for r in refs
+-               if r.get("audio_latent") is not None]
++        # audio latents ride the same payload - keyframes carry cond audio
++        # too (fl2va anchors, chunk continuation tails), so the packed
++        # layout's keyframe-audio-then-ref-audio row order must be matched
++        # here exactly like the cond_video_latents merge above, or
++        # _embed_and_pack cannot fill the layout's reserved audio rows.
++        aud = ([k["audio_latent"] for k in kf if k.get("audio_latent") is not None]
++               + [r["audio_latent"] for r in refs
++                  if r.get("audio_latent") is not None])
+         if aud:
+             payload["cond_audio_latents"] = aud
+         # frame_count only when the graph supplied one - overwriting a value
