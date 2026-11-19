@@ -42,6 +42,10 @@ FIXED_ARGS: list[str] = [
 OUTPUT_DIRECTORY = Path.home() / "git-ai" / "ai-models" / "Data" / "Images" / "Text2Img"
 CUSTOM_NODES_DEPS = REPO_ROOT / "scripts" / "custom_nodes_deps.py"
 
+# Linux hosts here have /tmp on zram; park ComfyUI scratch there instead of the
+# repo temp dir. Other platforms keep the upstream defaults.
+TEMP_ROOT = Path("/tmp/comfyui") if sys.platform == "linux" else None
+
 
 def main(argv: list[str] | None = None) -> int:
     extra = list(sys.argv[1:] if argv is None else argv)
@@ -51,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
         print("\nFixed main.py flags (this launcher has no flags of its own):")
         print("  " + " ".join(a for a in FIXED_ARGS if not a.startswith("#")))
         print("  --output-directory " + str(OUTPUT_DIRECTORY))
+        if TEMP_ROOT is not None:
+            print("  --temp-directory " + str(TEMP_ROOT) + "  (TMPDIR=" + str(TEMP_ROOT) + ")")
         return 0
     os.chdir(REPO_ROOT)
     env = dict(os.environ)
@@ -67,6 +73,12 @@ def main(argv: list[str] | None = None) -> int:
     # so let it skip rather than let a missing dep take the whole pack down.
     env["WAS_BLOCK_AUTO_INSTALL"] = "1"
 
+    temp_args: list[str] = []
+    if TEMP_ROOT is not None:
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        env.setdefault("TMPDIR", str(TEMP_ROOT))
+        temp_args = ["--temp-directory", str(TEMP_ROOT)]
+
     # Pre-flight dependency audit: warn about missing custom node deps without blocking startup.
     print("=== Custom node dependency audit ===")
     run_quietly([str(venv_python()), str(CUSTOM_NODES_DEPS), "audit"])
@@ -76,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         str(venv_python()),
         "main.py",
         *FIXED_ARGS,
+        *temp_args,
         "--output-directory",
         str(OUTPUT_DIRECTORY),
         *extra,
