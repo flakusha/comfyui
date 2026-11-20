@@ -17,12 +17,11 @@ observable result, and the portable form (os.execv is unreliable on Windows).
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 from glob import glob
 from pathlib import Path
 
-from local_common import REPO_ROOT, detect_gpu, run_quietly, venv_python
+from local_common import REPO_ROOT, detect_gpu, run_cmd, run_quietly, venv_python
 
 # Fixed argument block, verbatim from start-local.sh (commented-out entries kept).
 FIXED_ARGS: list[str] = [
@@ -93,11 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         str(OUTPUT_DIRECTORY),
         *extra,
     ]
-    try:
-        return subprocess.run(cmd, env=env).returncode
-    except OSError as exc:
-        print(f"{cmd[0]}: {exc}", file=sys.stderr)
-        return 127
+    return run_cmd(cmd, env=env)
 
 
 if __name__ == "__main__":
