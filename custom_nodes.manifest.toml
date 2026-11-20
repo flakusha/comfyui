@@ -152,7 +152,7 @@ ref = "main"
 url = "https://github.com/yolain/ComfyUI-Easy-Use"
 ref = "main"
 patches = ["0001-cloud-api-timeouts.patch"]
-patches_base = "d08ce763bc28e952566ecda91235709aa3fc6bbb"
+patches_base = "f141539dfea4e69ac742967d5380cf97d60c007d"
 
 [nodes.comfyui-impact-pack]
 url = "https://github.com/ltdrdata/ComfyUI-Impact-Pack"
@@ -190,7 +190,7 @@ ref = "main"
 # .docx/.odt/.pdf export on Save (python-docx, odfdo, xhtml2pdf); vector_stores stays opt-in.
 extras = ["document_export", "llm"]
 patches = ["0001-web-fetches-honor-base-path.patch", "0002-llm-gguf-gpu-backend-wording.patch", "0003-llm-seeds-stay-fixed-for-caching.patch"]
-patches_base = "fc956f10675a9f9d9f96263a146aaafd66255554"
+patches_base = "44aec45c569849f6cb0415e143ecbdc4a19b16ec"
 
 [nodes.comfyui-minimaxh3-director]
 url = "https://github.com/flakusha/ComfyUI-MiniMaxH3-Director.git"
