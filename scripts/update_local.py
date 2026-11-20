@@ -70,6 +70,8 @@ from local_common import (
 )
 
 BACKUP_REF = "refs/pre-rebase-backup"
+# the original repository; step 1 auto-adds it on a fresh fork clone that only has origin
+UPSTREAM_URL = "https://github.com/Comfy-Org/ComfyUI.git"
 BASE_EXTRAS: tuple[str, ...] = ("rocm-arch-gfx1100", "manager", "dev")
 # torch resolves through conflicting uv forks (pyproject [tool.uv].conflicts);
 # two hardware extras together can never sync. The ROCm entries are per-arch
@@ -570,6 +572,11 @@ def main(argv: list[str] | None = None) -> int:
         fail("on master; run this from the patch-stack branch (local).")
 
     # 1. fetch upstream master (FF-only refspec)
+    if not git_output("remote", "get-url", "upstream").strip():
+        # fresh fork clone: only origin exists, so link the original repository
+        print(f"adding missing upstream remote -> {UPSTREAM_URL}")
+        if run_cmd(["git", "remote", "add", "upstream", UPSTREAM_URL]) != 0:
+            fail("could not add the upstream remote; link it by hand: git remote add upstream https://github.com/Comfy-Org/ComfyUI.git")
     old_master = git_output("rev-parse", "master").strip()
     print("=== fetching upstream master ===")
     if run_cmd(["git", "fetch", "--quiet", "upstream", "master:master"]) != 0:

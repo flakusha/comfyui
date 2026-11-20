@@ -18,6 +18,10 @@
 > **Local fork.** This checkout is a personal fork: the `local` branch carries a
 > stack of patch commits rebased onto upstream `master`; custom nodes are pinned
 > per `custom_nodes.manifest.toml` (patches in `custom_nodes_patches/`).
+> **Fresh clone:** link the original repo (`git remote add upstream
+> https://github.com/Comfy-Org/ComfyUI.git` — the updater does this itself when
+> missing) and check out the stack (`git checkout local`); a bare clone lands
+> on the `master` mirror, which the updater refuses to run from.
 > **Rebase/force-push policy:** upstream and the `origin/master` mirror are only
 > ever moved by fast-forward — the script never force-pushes. Mirroring upstream
 > into `origin/master` is a guarded prompt (`--mirror` to auto-approve, `--no-mirror`
