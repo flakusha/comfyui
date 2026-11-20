@@ -727,12 +727,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         run_sync(opts.extras)
         sync_mode = "applied-post-bump"
-        if run_cmd(["git", "add", "pyproject.toml"]) != 0 or run_cmd(
+        if run_cmd(["git", "add", "pyproject.toml", "uv.lock"]) != 0 or run_cmd(
             ["git", "commit", "-m", "Update companion pins to requirements exacts"]
         ) != 0:
             fail(
                 "git commit of the companion-floor update failed; the edit stays in the "
-                "tree — commit pyproject.toml by hand, then rerun."
+                "tree — commit pyproject.toml and uv.lock by hand, then rerun."
             )
 
     # 5. custom node checkouts (manifest-pinned refs), then the deps the
