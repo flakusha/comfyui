@@ -556,6 +556,36 @@ def sync_required(
     return force or dry_run_rc != 0 or bool(removed) or bool(installed)
 
 
+def _repo_path(url: str) -> str:
+    """Remote URLs compared by repo path: scheme, host, case, and `.git` ignored."""
+    path = url.strip().lower().rstrip("/")
+    path = re.sub(r"^(https?://[^/]+/|git@[^:]+:)", "", path)
+    return path.removesuffix(".git")
+
+
+def ensure_upstream_remote() -> None:
+    """Link the original repository when this clone only has origin.
+
+    Fresh fork clones ship without an `upstream` remote; adding it is a
+    local-config change, so it needs no guard prompt. A present-but-foreign
+    URL is the operator's explicit config — warn, don't override.
+    """
+    have = git_output("remote", "get-url", "upstream").strip()
+    if not have:
+        print(f"adding missing upstream remote -> {UPSTREAM_URL}")
+        if run_cmd(["git", "remote", "add", "upstream", UPSTREAM_URL]) != 0:
+            fail(
+                "could not add the upstream remote; link it by hand: "
+                "git remote add upstream https://github.com/Comfy-Org/ComfyUI.git"
+            )
+    elif _repo_path(have) != _repo_path(UPSTREAM_URL):
+        print(
+            f"warning: upstream remote points at {have}, expected {UPSTREAM_URL} — "
+            "fetching from the configured remote.",
+            file=sys.stderr,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Main flow — step numbers match update-local.sh's comments
 # ---------------------------------------------------------------------------
@@ -572,11 +602,7 @@ def main(argv: list[str] | None = None) -> int:
         fail("on master; run this from the patch-stack branch (local).")
 
     # 1. fetch upstream master (FF-only refspec)
-    if not git_output("remote", "get-url", "upstream").strip():
-        # fresh fork clone: only origin exists, so link the original repository
-        print(f"adding missing upstream remote -> {UPSTREAM_URL}")
-        if run_cmd(["git", "remote", "add", "upstream", UPSTREAM_URL]) != 0:
-            fail("could not add the upstream remote; link it by hand: git remote add upstream https://github.com/Comfy-Org/ComfyUI.git")
+    ensure_upstream_remote()
     old_master = git_output("rev-parse", "master").strip()
     print("=== fetching upstream master ===")
     if run_cmd(["git", "fetch", "--quiet", "upstream", "master:master"]) != 0:
