@@ -160,14 +160,6 @@ def detect_gpu() -> tuple[str | None, str | None]:
     arch = os.environ.get("COMFYUI_ROCM_ARCH", "").strip().lower()
     if arch:
         return ROCM_ARCH_EXTRAS.get(arch), ROCM_ARCH_EXTRAS.get(arch)
-    override = os.environ.get("COMFYUI_GPU_EXTRA", "").strip()
-    if override:
-        arch = os.environ.get("COMFYUI_ROCM_ARCH", "").strip().lower()
-        arch_extra = ROCM_ARCH_EXTRAS.get(arch) if arch else None
-        return override, arch_extra
-    arch = os.environ.get("COMFYUI_ROCM_ARCH", "").strip().lower()
-    if arch:
-        return ROCM_ARCH_EXTRAS.get(arch), ROCM_ARCH_EXTRAS.get(arch)
     pci = _read_sysfs_pci_ids() or _lspci_ids()
     seen = {entry.split(":", 1)[0] for entry in pci}
     if "0x10de" in seen:

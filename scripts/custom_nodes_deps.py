@@ -480,6 +480,17 @@ SITE_PATCHES = [
 ]
 
 
+def _revert_site_patch(base: list[str], repo: Path, patch: Path) -> str | None:
+    """Undo a just-applied site patch; an error message when the revert fails."""
+    proc = subprocess.run(
+        [*base, "--reverse", str(patch)], cwd=repo, capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        return f"site patch REVERT FAILED: {patch.name}: {detail}; inspect by hand"
+    return None
+
+
 def apply_site_patches(dry_run: bool = False) -> bool:
     """Converge SITE_PATCHES onto the installed packages; True when settled.
 
@@ -559,12 +570,10 @@ def apply_site_patches(dry_run: bool = False) -> bool:
         try:
             py_compile.compile(str(pkg_dir / rel), doraise=True)
         except py_compile.PyCompileError as e:
-            subprocess.run(
-                [*base, "--reverse", str(patch)], cwd=repo, capture_output=True, text=True
-            )
+            revert_err = _revert_site_patch(base, repo, patch)
+            tail = revert_err or "site patch reverted"
             print(
-                f"{package}: ERROR: patched file failed to compile: {rel}: {e}; "
-                "site patch reverted",
+                f"{package}: ERROR: patched file failed to compile: {rel}: {e}; {tail}",
                 file=sys.stderr,
             )
             ok = False

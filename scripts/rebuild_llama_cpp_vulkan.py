@@ -41,7 +41,6 @@ from pathlib import Path
 from local_common import REPO_ROOT, venv_python
 
 PACKAGE = "llama-cpp-python"
-MODULE = "llama_cpp"
 
 #: flavor -> (CMAKE_ARGS, toolchain probe). Empty CMAKE_ARGS = plain CPU build.
 FLAVORS: dict[str, tuple[str, str | None]] = {
