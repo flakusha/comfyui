@@ -3,9 +3,14 @@ import yaml
 import folder_paths
 import logging
 
-def load_extra_path_config(yaml_path):
+def _extra_paths(yaml_path):
     with open(yaml_path, 'r', encoding='utf-8') as stream:
         config = yaml.safe_load(stream)
+    if config is None:
+        # A comment-only or empty YAML parses to None; iterating it crashed
+        # startup with a TypeError.
+        logging.warning(f"Extra path config contains no mappings: {yaml_path}")
+        return
     yaml_dir = os.path.dirname(os.path.abspath(yaml_path))
     for c in config:
         conf = config[c]
@@ -29,6 +34,20 @@ def load_extra_path_config(yaml_path):
                     full_path = os.path.join(base_path, full_path)
                 elif not os.path.isabs(full_path):
                     full_path = os.path.abspath(os.path.join(yaml_dir, y))
-                normalized_path = os.path.normpath(full_path)
-                logging.info("Adding extra search path {} {}".format(x, normalized_path))
-                folder_paths.add_model_folder_path(x, normalized_path, is_default)
+                yield x, os.path.normpath(full_path), is_default
+
+
+def load_extra_path_config(yaml_path):
+    for x, normalized_path, is_default in _extra_paths(yaml_path):
+        logging.info("Adding extra search path {} {}".format(x, normalized_path))
+        folder_paths.add_model_folder_path(x, normalized_path, is_default)
+
+
+def restore_extra_path_config(yaml_path):
+    """Re-add extra search paths that a custom node dropped by replacing a folder's path list.
+    Only appends missing paths, so the node's own paths keep their order."""
+    for x, normalized_path, _is_default in _extra_paths(yaml_path):
+        entry = folder_paths.folder_names_and_paths.get(folder_paths.map_legacy(x))
+        if entry is not None and normalized_path not in entry[0]:
+            logging.info("Restoring extra search path {} {} (a custom node replaced this folder's paths)".format(x, normalized_path))
+            folder_paths.add_model_folder_path(x, normalized_path)
