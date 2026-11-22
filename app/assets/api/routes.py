@@ -459,7 +459,7 @@ async def list_assets_route(request: web.Request) -> web.Response:
     sort = _validate_sort_field(q.sort)
     order = q.order
 
-    try:
+    def fetch_page():
         cursor_boundary = _decode_record_cursor(q.after, sort, order)
         cursor_supported = sort in _CURSOR_SORT_FIELDS
         fetch_limit = q.limit + 1 if cursor_supported else q.limit
@@ -471,6 +471,7 @@ async def list_assets_route(request: web.Request) -> web.Response:
                     any_tags=tuple(tags_any),
                     none_tags=tuple(tags_none),
                     name_contains=q.name_contains,
+                    content_hash=q.hash,
                     limit=fetch_limit,
                     offset=q.offset,
                     sort=sort,
@@ -495,6 +496,11 @@ async def list_assets_route(request: web.Request) -> web.Response:
                 )
                 for record in records
             ]
+        return summaries, total, next_cursor
+
+    try:
+        # Off the event loop: on a large catalog the count scans every matching record.
+        summaries, total, next_cursor = await asyncio.to_thread(fetch_page)
     except InvalidCursorError as e:
         return _build_error_response(400, "INVALID_CURSOR", str(e))
 
