@@ -26,7 +26,7 @@ import struct
 import ssl
 import socket
 import ipaddress
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, UnidentifiedImageError
 from PIL.PngImagePlugin import PngInfo
 from io import BytesIO
 
@@ -76,6 +76,18 @@ if TYPE_CHECKING:
 # Import cache control middleware
 from middleware.cache_middleware import cache_control
 
+if args.enable_manager:
+    import comfyui_manager
+
+
+if dependencies_available():
+    from app.assets.previews import generate_upload_preview
+    from app.assets.services.asset_management import (
+    from app.assets.services.preview_rules import preview_fields
+    from app.asset_export import AssetExportManager
+if TYPE_CHECKING:
+    from app.assets.manager import AssetManager
+# Import cache control middleware
 if args.enable_manager:
     import comfyui_manager
 
@@ -483,7 +495,7 @@ class PromptServer():
                 full_output_folder = os.path.join(upload_dir, os.path.normpath(subfolder))
                 filepath = os.path.abspath(os.path.join(full_output_folder, filename))
 
-                if os.path.commonpath((upload_dir, filepath)) != upload_dir:
+                if not folder_paths.is_within_directory(upload_dir, filepath):
                     return web.Response(status=400), None, None
 
                 if not os.path.exists(full_output_folder):
@@ -501,11 +513,15 @@ class PromptServer():
                             break
                         filename = f"{split[0]} ({i}){split[1]}"
                         filepath = os.path.join(full_output_folder, filename)
+                        if not folder_paths.is_within_directory(upload_dir, filepath):
+                            return web.Response(status=400), None, None
                         i += 1
 
                 if not image_is_duplicate:
                     if image_save_function is not None:
-                        image_save_function(image, post, filepath)
+                        save_resp = image_save_function(image, post, filepath)
+                        if isinstance(save_resp, web.Response):
+                            return save_resp, None, None
                     else:
                         with open(filepath, "wb") as f:
                             f.write(image.file.read())
@@ -574,11 +590,14 @@ class PromptServer():
 
                 if original_ref.get("subfolder", "") != "":
                     full_output_dir = os.path.join(output_dir, original_ref["subfolder"])
-                    if os.path.commonpath((os.path.abspath(full_output_dir), output_dir)) != output_dir:
+                    if not folder_paths.is_within_directory(output_dir, full_output_dir):
                         return web.Response(status=403)
                     output_dir = full_output_dir
 
+                filename = os.path.basename(filename)
                 file = os.path.join(output_dir, filename)
+                if not folder_paths.is_within_directory(output_dir, file):
+                    return web.Response(status=403)
 
                 if os.path.isfile(file):
                     with Image.open(file) as original_pil:
@@ -636,16 +655,25 @@ class PromptServer():
 
                     if "subfolder" in request.rel_url.query:
                         full_output_dir = os.path.join(output_dir, request.rel_url.query["subfolder"])
-                        if os.path.commonpath((os.path.abspath(full_output_dir), output_dir)) != output_dir:
+                        if not folder_paths.is_within_directory(output_dir, full_output_dir):
                             return web.Response(status=403)
                         output_dir = full_output_dir
 
                     filename = os.path.basename(filename)
                     file = os.path.join(output_dir, filename)
+                    if not folder_paths.is_within_directory(output_dir, file):
+                        return web.Response(status=403)
 
                 if os.path.isfile(file):
+                    preview_img = None
                     if 'preview' in request.rel_url.query:
-                        with Image.open(file) as img:
+                        try:
+                            preview_img = Image.open(file)
+                        except UnidentifiedImageError:
+                            # PIL can't decode this format (e.g. EXR): serve the raw file below.
+                            pass
+                    if preview_img is not None:
+                        with preview_img as img:
                             preview_info = request.rel_url.query['preview'].split(';')
                             image_format = preview_info[0]
                             if image_format not in ['webp', 'jpeg'] or 'a' in request.rel_url.query.get('channel', ''):

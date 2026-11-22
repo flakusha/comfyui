@@ -103,7 +103,7 @@ class UserManager():
         path = user_root
 
         # prevent leaving /{type}
-        if os.path.commonpath((root_dir, user_root)) != root_dir:
+        if not folder_paths.is_within_directory(root_dir, user_root):
             return None
 
         if file is not None:
@@ -113,7 +113,7 @@ class UserManager():
 
             # prevent leaving /{type}/{user}
             path = os.path.abspath(os.path.join(user_root, file))
-            if os.path.commonpath((user_root, path)) != user_root:
+            if not folder_paths.is_within_directory(user_root, path):
                 return None
 
         parent = os.path.split(path)[0]
@@ -197,7 +197,9 @@ class UserManager():
             if not directory:
                 return web.Response(status=400, text="Directory not provided")
 
-            path = self.get_request_user_filepath(request, directory)
+            # Listing is read-only: resolve the path without creating anything so a
+            # request for a missing directory doesn't leave empty directories behind.
+            path = self.get_request_user_filepath(request, directory, create_dir=False)
             if not path:
                 return web.Response(status=403, text="Invalid directory")
 
