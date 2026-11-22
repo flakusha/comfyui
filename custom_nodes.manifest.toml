@@ -189,7 +189,11 @@ url = "https://github.com/WASasquatch/was-node-suite-comfyui.git"
 ref = "main"
 # .docx/.odt/.pdf export on Save (python-docx, odfdo, xhtml2pdf); vector_stores stays opt-in.
 extras = ["document_export", "llm"]
-patches = ["0001-web-fetches-honor-base-path.patch", "0002-llm-gguf-gpu-backend-wording.patch", "0003-llm-seeds-stay-fixed-for-caching.patch"]
+patches = [
+  "0001-web-fetches-honor-base-path.patch",
+  "0002-llm-gguf-gpu-backend-wording.patch",
+  "0003-llm-seeds-stay-fixed-for-caching.patch",
+]
 patches_base = "44aec45c569849f6cb0415e143ecbdc4a19b16ec"
 
 [nodes.comfyui-minimaxh3-director]
@@ -204,4 +208,8 @@ ref = "local-patches"
 
 [nodes.comfyui-speed-sampler]
 url = "https://github.com/StanLukuvka/ComfyUI-SPEED-Sampler.git"
+ref = "main"
+
+[nodes.comfyui-piflow]
+url = "https://github.com/Lakonik/ComfyUI-piFlow.git"
 ref = "main"
