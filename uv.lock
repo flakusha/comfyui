@@ -1393,14 +1393,14 @@ wheels = [
 
 [[package]]
 name = "comfy-kitchen"
-version = "0.2.41"
+version = "0.2.42"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/e3/f6738af148e634075e41c6b96b007aa2d6bd670d3d484a157f14526f8bb5/comfy_kitchen-0.2.41-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:161ee74206277182be7d31faa0b5f2e079b37c076092c276c90bea2e086f6e1e", size = 37637289, upload-time = "2026-11-05T01:45:00.529Z" },
-    { url = "https://files.pythonhosted.org/packages/11/8b/672ecbe36e5e59c559fb8f7ffcce935e283184b08a88313da99d3d3cc0d9/comfy_kitchen-0.2.41-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ca16d4c4f4cdd8fb76af7261b9fcc4596b2111511077dd7cd7f4884b5f2686af", size = 69235207, upload-time = "2026-11-05T01:45:07.26Z" },
-    { url = "https://files.pythonhosted.org/packages/f6/c0/403dd5e44158a0def758c20850f80200ebc39ff702d177493b96e4d480bf/comfy_kitchen-0.2.41-cp312-abi3-win_amd64.whl", hash = "sha256:cbe8f7fd9aa42e2af01a31d235fd4de59eb429ecc5a58287eed0975195b68707", size = 65283137, upload-time = "2026-11-05T01:45:14.09Z" },
-    { url = "https://files.pythonhosted.org/packages/53/55/841672b10fa9421ec6c52189ef8e9be75575b5eebf3b515ddb7eadc8987b/comfy_kitchen-0.2.41-cp312-abi3-win_arm64.whl", hash = "sha256:79bb5c33c63e96de27c12e3495e238847d2f28a40e1595f46506bc316cb31b27", size = 17145331, upload-time = "2026-11-05T01:45:17.998Z" },
-    { url = "https://files.pythonhosted.org/packages/98/50/25c120039731b874daeec5aa771e0787a8acd074aeb2a3354e005a91f067/comfy_kitchen-0.2.41-py3-none-any.whl", hash = "sha256:19bdd7f8aaa35c512ef69393038ddca51f030bcabf6a7694fdf1660bcae8c66a", size = 264906, upload-time = "2026-11-05T01:45:20.616Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/1c/3e9b0ca6c30eceb39f55ade2f5b9bca62569c6426f5d63e6c616ad2b0d64/comfy_kitchen-0.2.42-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d948a87f8e75271dfbc7a260340788c11600b947fc30ccd105564cc3b2db4381", size = 40569115, upload-time = "2026-11-21T23:37:08.315Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/ad/cab58069ca595e350f786072e0f6e0d0ab980857a9c6faeb9ede3dfafa03/comfy_kitchen-0.2.42-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7cb5fb389a7ade85cadfcd5d90792bed97a76f111d8c57884066e1bddf19535d", size = 77402708, upload-time = "2026-11-21T23:37:14.852Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/ec/c7d70e6ea7a5ac60904c29e195102e31f62780d20d43826f77931d5ff441/comfy_kitchen-0.2.42-cp312-abi3-win_amd64.whl", hash = "sha256:dd4aaffca31e3998001fb3682cbd6d735b274fea79304d37ddec28061eeb62b0", size = 73170599, upload-time = "2026-11-21T23:37:21.22Z" },
+    { url = "https://files.pythonhosted.org/packages/10/8b/786996e350e2af2da00ed111e3668ac52a796351484d13480bfcb70fec18/comfy_kitchen-0.2.42-cp312-abi3-win_arm64.whl", hash = "sha256:a8406c7fc7a8b725bcdbd81a8a4f6894e3cd7df11b67fba3a5006255d5c73ee6", size = 18605653, upload-time = "2026-11-21T23:37:24.84Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/75/ae3d8709f146433f2e2437be4a5480bb1534ec6d69e83348e4942193cf37/comfy_kitchen-0.2.42-py3-none-any.whl", hash = "sha256:20f4668e02291161495b71ab3568d38dbbbaafd6915fac7ea5a11fa6aa83051b", size = 278089, upload-time = "2026-11-21T23:37:26.838Z" },
 ]
 
 [[package]]
@@ -1680,9 +1680,9 @@ requires-dist = [
     { name = "blake3" },
     { name = "comfy-aimdo", specifier = ">=0.6.0" },
     { name = "comfy-angle" },
-    { name = "comfy-kitchen", specifier = ">=0.2.41" },
+    { name = "comfy-kitchen", specifier = ">=0.2.42" },
     { name = "comfyui-embedded-docs", specifier = ">=0.5.17" },
-    { name = "comfyui-frontend-package", specifier = ">=1.59.10" },
+    { name = "comfyui-frontend-package", specifier = ">=1.59.11" },
     { name = "comfyui-manager", marker = "extra == 'manager'", specifier = ">=4.2.2" },
     { name = "comfyui-workflow-templates", specifier = ">=0.11.114" },
     { name = "cryptography", marker = "extra == 'dev'" },
@@ -1807,7 +1807,7 @@ source = { virtual = "custom_nodes/ComfyUI-ClipProj" }
 
 [[package]]
 name = "comfyui-dasiwa-nodes"
-version = "0.5.58"
+version = "0.5.61"
 source = { virtual = "custom_nodes/ComfyUI-DaSiWa-Nodes" }
 dependencies = [
     { name = "accelerate" },
