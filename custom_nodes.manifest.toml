@@ -194,7 +194,7 @@ patches = [
   "0002-llm-gguf-gpu-backend-wording.patch",
   "0003-llm-seeds-stay-fixed-for-caching.patch",
 ]
-patches_base = "44aec45c569849f6cb0415e143ecbdc4a19b16ec"
+patches_base = "7ea97c3fd2874b5d1aff6514d17b3b44cdbefb09"
 
 [nodes.comfyui-minimaxh3-director]
 url = "https://github.com/flakusha/ComfyUI-MiniMaxH3-Director.git"
