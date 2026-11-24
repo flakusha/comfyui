@@ -101,6 +101,17 @@ _AMD_PCI_TO_GFX: dict[str, str] = {
 }
 
 
+def _arch_extra(arch: str) -> str:
+    """Arch env value -> extra name; an unknown target is a fatal misconfiguration."""
+    extra = ROCM_ARCH_EXTRAS.get(arch)
+    if extra is None:
+        fail(
+            f"unknown COMFYUI_ROCM_ARCH={arch!r}; choose one of: "
+            + ", ".join(ROCM_ARCH_EXTRAS)
+        )
+    return extra
+
+
 def _read_sysfs_pci_ids() -> list[str]:
     """Lowercase AMD/Intel/NVIDIA PCI device-id high words from sysfs."""
     ids: list[str] = []
@@ -132,7 +143,7 @@ def _lspci_ids() -> list[str]:
             [lspci, "-n"],
             capture_output=True, text=True, timeout=10,
         ).stdout
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return []
     ids: list[str] = []
     for line in out.splitlines():
@@ -155,11 +166,12 @@ def detect_gpu() -> tuple[str | None, str | None]:
     override = os.environ.get("COMFYUI_GPU_EXTRA", "").strip()
     if override:
         arch = os.environ.get("COMFYUI_ROCM_ARCH", "").strip().lower()
-        arch_extra = ROCM_ARCH_EXTRAS.get(arch) if arch else None
+        arch_extra = _arch_extra(arch) if arch else None
         return override, arch_extra
     arch = os.environ.get("COMFYUI_ROCM_ARCH", "").strip().lower()
     if arch:
-        return ROCM_ARCH_EXTRAS.get(arch), ROCM_ARCH_EXTRAS.get(arch)
+        extra = _arch_extra(arch)
+        return extra, extra
     pci = _read_sysfs_pci_ids() or _lspci_ids()
     seen = {entry.split(":", 1)[0] for entry in pci}
     if "0x10de" in seen:

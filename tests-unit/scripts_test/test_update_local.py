@@ -1,17 +1,23 @@
 """Unit tests for scripts/update_local.py's persisted-state helpers.
 
-Resource contract (parallel-safe): every test owns only its runner-allocated
+Resource contract (parallel-safe): path tests own only their runner-allocated
 ``tmp_path`` — no fixed paths, ports, databases, or shared mutable globals.
-Module import is read-only (constants and function definitions), and the
-repo's real .local-state/ is never touched: save_state/load_state are always
-aimed at tmp_path, so the suite passes under any runner parallelism or order.
+Module import is read-only, and the repo's real .local-state/ is never touched.
+The GPU tests patch names in ``local_common`` itself and environment variables
+through ``monkeypatch`` (restored at teardown); they never patch the shared
+``subprocess`` or ``shutil`` modules, so the suite is order- and thread-safe.
 """
 
 import json
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import local_common as lc
 import update_local as ul
 
 
@@ -93,3 +99,31 @@ def test_sync_required_matrix():
     assert ul.sync_required(False, 1, {}, {})
     assert ul.sync_required(False, 0, {}, {"newpkg": "3.2.1"})
     assert ul.sync_required(False, 0, {"gonerpkg": "1.0.0"}, {})
+
+
+def test_sync_cmd_does_not_repeat_explicit_hardware_extra():
+    cmd = ul.sync_cmd(("cuda",))
+    extras = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--extra"]
+    assert extras.count("cuda") == 1
+    assert len(extras) == len(set(extras))
+
+
+def test_unknown_rocm_arch_is_fatal(monkeypatch):
+    monkeypatch.setenv("COMFYUI_GPU_EXTRA", "")
+    monkeypatch.setenv("COMFYUI_ROCM_ARCH", "gfx9999")
+    with pytest.raises(SystemExit) as exc:
+        lc.detect_gpu()
+    assert exc.value.code == 1
+
+
+def test_lspci_timeout_is_ignored(monkeypatch):
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout", 10))
+
+    monkeypatch.setattr(lc, "shutil", SimpleNamespace(which=lambda name: "/usr/bin/lspci"))
+    monkeypatch.setattr(
+        lc,
+        "subprocess",
+        SimpleNamespace(run=timeout, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    assert lc._lspci_ids() == []

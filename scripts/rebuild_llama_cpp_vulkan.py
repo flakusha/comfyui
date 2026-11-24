@@ -71,7 +71,11 @@ def gpu_ready() -> bool:
         return False
     lib = Path(llama_cpp.__file__).parent / "lib"
     try:
-        names = {p.name for p in lib.glob("*.so")}
+        names = {
+            p.name
+            for pattern in ("*.so", "*.dylib", "*.pyd", "*.dll")
+            for p in lib.glob(pattern)
+        }
     except OSError:
         return False
     return any("vulkan" in n or "cuda" in n or "hip" in n for n in names)

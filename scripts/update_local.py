@@ -17,8 +17,8 @@ pass optional extras through: --extra sage --extra onnx-rocm (hardware extras
 rocm-arch-*/cuda/cpu/xpu are mutually exclusive, as are
 llama-vulkan/llama-cuda/llama-rocm/llama-cpu — passing more than one exits code 2)
 first run / after changing extras: uv lock --upgrade first, then this script
-pyproject.toml conflict -> merge hunks BY HAND, never a wholesale side; runbook:
-  .tmp/proposals/update-rebase-tooling.md §3b (merge [tool.uv] keys; then uv lock --check).
+pyproject.toml conflict -> merge hunks BY HAND, never a wholesale side; keep both
+  sides' [tool.uv] keys, then run uv lock --check.
 rollback: mid-rebase -> git rebase --abort ; after -> git reset --hard refs/pre-rebase-backup
   (on local; the ref is kept until gates pass, then deleted)
   env: git checkout uv.lock && uv sync --inexact --extra rocm-arch-gfx1100 --extra manager --extra dev --python .venv/bin/python
@@ -298,6 +298,11 @@ def lost_patch_ids(missing: list[str], master_pairs: list[tuple[str, str]]) -> l
     return sorted(pid for pid in missing if pid not in master)
 
 
+def refuse_lost_commits(lost: list[str], force: bool, pre_count: int, post_count: int) -> bool:
+    """Only a shrinking stack can mean lost commits; equal counts mean pid drift."""
+    return bool(lost) and not force and post_count < pre_count
+
+
 _DELTA_LINE = re.compile(r"^ ([+-]) ([A-Za-z0-9._-]+)==(.+?)\s*$")
 
 
@@ -481,7 +486,8 @@ def sync_cmd(extra_names: tuple[str, ...]) -> list[str]:
     """uv sync command: repo .venv, --inexact (keep custom-node packages),
     base extras plus any --extra passthrough."""
     cmd = ["uv", "sync", "--python", str(venv_python()), "--inexact"]
-    for name in (*resolve_base_extras(extra_names), *extra_names):
+    names = dict.fromkeys((*resolve_base_extras(extra_names), *extra_names))
+    for name in names:
         cmd.extend(["--extra", name])
     return cmd
 
@@ -647,8 +653,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if run_cmd(["git", "rebase", "master"]) != 0:
             print("rebase conflict; resolve then git rebase --continue, or git rebase --abort.", file=sys.stderr)
-            print("pyproject.toml conflicts: merge hunks by hand — runbook:", file=sys.stderr)
-            print("  .tmp/proposals/update-rebase-tooling.md §3b (then: uv lock --check)", file=sys.stderr)
+            print("pyproject.toml conflicts: merge hunks by hand (keep both sides' [tool.uv] keys),", file=sys.stderr)
+            print("  then git rebase --continue; the updater checks uv lock afterwards.", file=sys.stderr)
             short_tip = git_output("rev-parse", "--short", pre_tip).strip() or pre_tip
             fail(f"pre-rebase stack tip: refs/pre-rebase-backup ({short_tip})")
 
@@ -657,16 +663,17 @@ def main(argv: list[str] | None = None) -> int:
         if missing:
             # classify against the patches this fetch actually brought in (master..upstream/master is
             # always empty here: step 1 already FF'd master to upstream/master). pid drift is inherent —
-            # a replayed commit resolving with different context gets a new pid; durable skip ledger is
-            # the follow-up (postponed-plan.md P-b), not implemented yet.
+            # a replayed commit resolving with different context gets a new pid; equal commit counts
+            # are therefore not a loss.
             master_pairs = collect_patch_ids(f"{old_master}..master") if old_master else []
             lost = lost_patch_ids(missing, master_pairs)
-            for pid in missing:
+            absorbed = [pid for pid in missing if pid not in lost]
+            for pid in absorbed:
                 sha = sha_for_patch_id(pre_pairs, pid)
                 if sha:
                     run_cmd(["git", "log", "-1", "--format=  absorbed: %h %s", sha])
-            if lost and not opts.force:
-                post_count = int(git_output_strict("rev-list", "--count", "master..local").strip())
+            post_count = int(git_output_strict("rev-list", "--count", "master..local").strip())
+            if refuse_lost_commits(lost, opts.force, pre_count, post_count):
                 print(
                     f"rebase truly dropped commits (master..local: {pre_count} -> {post_count}); "
                     "refusing (--force to accept):",
@@ -685,10 +692,10 @@ def main(argv: list[str] | None = None) -> int:
             print("=== uv lock --check (pyproject.toml changed in rebase) ===")
             if run_cmd(["uv", "lock", "--check"], env=uv_env()) != 0:
                 print(
-                    "uv lock --check FAILED after a pyproject.toml-touching rebase; fix the merge — runbook:",
+                    "uv lock --check FAILED after a pyproject.toml-touching rebase; "
+                    "merge both sides' [tool.uv] keys in pyproject.toml, then re-run uv lock --check.",
                     file=sys.stderr,
                 )
-                print("  .tmp/proposals/update-rebase-tooling.md §3b", file=sys.stderr)
                 sys.exit(1)
 
     # 4. sync env

@@ -51,8 +51,9 @@ from pathlib import Path
 
 try:
     from packaging.requirements import Requirement
+    from packaging.specifiers import InvalidSpecifier, SpecifierSet
     from packaging.utils import canonicalize_name
-    from packaging.version import Version
+    from packaging.version import InvalidVersion, Version
     HAS_PACKAGING = True
 except ImportError:
     HAS_PACKAGING = False
@@ -291,21 +292,15 @@ def deduplicate(entries: list[DepEntry]) -> dict[str, DepEntry]:
                 existing.specifier = new_spec
                 existing.raw = entry.raw
             elif existing_spec and new_spec:
-                # Both have specifiers — keep the more restrictive one
-                # Use SpecifierSet to compare: prefer the one with more constraints
+                # Satisfy both declarations — token count is not restrictiveness
+                # (">=1" and "==1.2.3" each carry one constraint). Contradictions
+                # stay in the combined specifier and surface as audit conflicts.
                 try:
-                    from packaging.specifiers import SpecifierSet
-                    existing_ss = SpecifierSet(existing_spec)
-                    new_ss = SpecifierSet(new_spec)
-                    # Count constraints as a proxy for restrictiveness
-                    existing_count = len(list(existing_ss))
-                    new_count = len(list(new_ss))
-                    if new_count > existing_count:
-                        existing.specifier = new_spec
-                        existing.raw = entry.raw
-                except Exception:
-                    # Fallback: keep existing
-                    pass
+                    existing.specifier = str(
+                        SpecifierSet(existing_spec) & SpecifierSet(new_spec)
+                    )
+                except InvalidSpecifier:
+                    pass  # malformed specifier: keep the first declaration
     return merged
 
 
@@ -335,15 +330,13 @@ def audit_package(package: str, specifier: str) -> AuditResult:
         )
 
     try:
-        from packaging.specifiers import SpecifierSet
-
         spec_set = SpecifierSet(specifier)
         if Version(installed) in spec_set:
             status = "ok"
         else:
             status = "conflict"
-    except Exception:
-        status = "ok"  # Can't parse specifier — assume OK
+    except (InvalidSpecifier, InvalidVersion):
+        status = "conflict"  # bad declaration: surface it instead of hiding it
 
     return AuditResult(
         package=package,
@@ -432,19 +425,15 @@ def install_missing(
     if dry_run:
         return results
 
-    for r in missing:
-        cmd = ["uv", "pip", "install", "--python", sys.executable]
-        if r.specifier:
-            cmd.append(f"{r.package}{r.specifier}")
-        else:
-            cmd.append(r.package)
-        try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"  ERROR installing {r.package}: {e}", file=sys.stderr)
-        except FileNotFoundError:
-            print("  ERROR: 'uv' not found in PATH", file=sys.stderr)
-            return results
+    specs = [f"{r.package}{r.specifier}" if r.specifier else r.package for r in missing]
+    cmd = ["uv", "pip", "install", "--python", sys.executable, *specs]
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"  ERROR installing {len(missing)} package(s): {e}", file=sys.stderr)
+    except FileNotFoundError:
+        print("  ERROR: 'uv' not found in PATH", file=sys.stderr)
+        return results
 
     # Re-audit after install, preserving declared_by from original results
     declared_by_map = {r.package: r.declared_by for r in missing}
@@ -1585,7 +1574,12 @@ def run_sync_manifest(manifest: Path, dry_run: bool = False) -> int:
         )
         if hash_:
             resolved[name] = hash_
-    failed = sorted(refusals)
+    if dry_run:
+        failed = sorted(refusals)
+    else:
+        # every real-run failure path returns None without a hash; count any
+        # unsettled node, not just those that reached a REFUSED branch
+        failed = sorted(refusals | (set(pins) - set(resolved)))
 
     if stamps and not dry_run and not failed:
         # auto-stamps from settled nodes, written with the same

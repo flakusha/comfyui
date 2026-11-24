@@ -1,5 +1,15 @@
+"""Unit tests for scripts/custom_nodes_deps.py.
+
+Resource contract (parallel-safe): pure tests own no resources; path tests own
+only their runner-allocated ``tmp_path``. Module-level names (subprocess shim,
+pkg_version, CUSTOM_NODES_DIR, REFS_STATE_FILE) are replaced through
+``monkeypatch`` and restored at teardown — no fixed paths, ports, or databases.
+"""
+
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -321,3 +331,54 @@ def test_deps_fingerprint_covers_manifest_extras(tmp_path, monkeypatch):
     manifest.write_text('[nodes.a]\nurl = "u"\nref = "main"\nextras = ["doc"]\n')
     with_extra = deps.deps_fingerprint()
     assert bare != with_base != with_extra
+
+
+@pytest.mark.skipif(not deps.HAS_PACKAGING, reason="packaging not installed")
+def test_deduplicate_intersects_specifiers():
+    from packaging.specifiers import SpecifierSet
+
+    entries = [
+        deps.req_to_entry("pkg>=1", "a", "requirements.txt"),
+        deps.req_to_entry("pkg==1.2.3", "b", "requirements.txt"),
+    ]
+    merged = deps.deduplicate(entries)
+    specs = SpecifierSet(merged["pkg"].specifier)
+    assert "1.2.3" in specs
+    assert "0.5" not in specs
+
+
+@pytest.mark.skipif(not deps.HAS_PACKAGING, reason="packaging not installed")
+def test_audit_reports_unparsable_specifier_as_conflict(monkeypatch):
+    monkeypatch.setattr(deps, "pkg_version", lambda name: "1.0.0")
+    assert deps.audit_package("pkg", ">=not-a-version").status == "conflict"
+    monkeypatch.setattr(deps, "pkg_version", lambda name: "not-a-version")
+    assert deps.audit_package("pkg", ">=1").status == "conflict"
+
+
+def test_install_missing_batches_into_one_uv_call(monkeypatch):
+    results = [
+        deps.AuditResult("a", ">=1", None, "missing"),
+        deps.AuditResult("b", "", None, "missing"),
+    ]
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(
+        deps,
+        "subprocess",
+        SimpleNamespace(run=fake_run, CalledProcessError=subprocess.CalledProcessError),
+    )
+    monkeypatch.setattr(deps, "run_audit", lambda mapping: results)
+    assert deps.install_missing(results) == results
+    assert calls == [["uv", "pip", "install", "--python", sys.executable, "a>=1", "b"]]
+
+
+def test_sync_reports_clone_failure_as_failed(tmp_path, monkeypatch):
+    manifest = tmp_path / "manifest.toml"
+    manifest.write_text('[nodes.broken]\nurl = "/nonexistent/git/repo"\nref = "latest"\n')
+    monkeypatch.setattr(deps, "CUSTOM_NODES_DIR", tmp_path / "custom_nodes")
+    monkeypatch.setattr(deps, "REFS_STATE_FILE", tmp_path / "refs.json")
+    assert deps.run_sync_manifest(manifest) == 1
