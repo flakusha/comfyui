@@ -80,18 +80,6 @@ if args.enable_manager:
     import comfyui_manager
 
 
-if dependencies_available():
-    from app.assets.previews import generate_upload_preview
-    from app.assets.services.asset_management import (
-    from app.assets.services.preview_rules import preview_fields
-    from app.asset_export import AssetExportManager
-if TYPE_CHECKING:
-    from app.assets.manager import AssetManager
-# Import cache control middleware
-if args.enable_manager:
-    import comfyui_manager
-
-
 def valid_workflow_metadata(json_data: dict) -> Optional[dict]:
     """The metadata a client may attach to a prompt's websocket messages.
 
