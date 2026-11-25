@@ -1,13 +1,13 @@
-diff --git a/web/threejs/module_widgets.js b/web/threejs/module_widgets.js
-index 1e3748e..8deec64 100644
---- a/web/threejs/module_widgets.js
-+++ b/web/threejs/module_widgets.js
+diff --git a/web/threejs/module_widgets.mjs b/web/threejs/module_widgets.mjs
+index 033e094..f8f27c5 100644
+--- a/web/threejs/module_widgets.mjs
++++ b/web/threejs/module_widgets.mjs
 @@ -6,6 +6,7 @@
  // Every widget is saved and sent whether it is drawn or not.
  
  import { app } from "../../../scripts/app.js";
 +import { api } from "../../../scripts/api.js";
- import { growSockets } from "../interface/grow_sockets.js";
+ import { growSockets } from "../interface/grow_sockets.mjs";
  
  const EXT_NAME = "WASNodeSuite.ThreeModuleUI";
 @@ -63,7 +64,7 @@ async function declarationFor(label) {
@@ -19,11 +19,11 @@ index 1e3748e..8deec64 100644
        cache: "no-store",
      });
      if (response.ok) {
-diff --git a/web/threejs/render_jobs.js b/web/threejs/render_jobs.js
-index 9635d92..2380c11 100644
---- a/web/threejs/render_jobs.js
-+++ b/web/threejs/render_jobs.js
-@@ -337,7 +337,7 @@ async function serveJobs() {
+diff --git a/web/threejs/render_jobs.mjs b/web/threejs/render_jobs.mjs
+index 43d99d1..c55968e 100644
+--- a/web/threejs/render_jobs.mjs
++++ b/web/threejs/render_jobs.mjs
+@@ -48,7 +48,7 @@ async function serveJobs() {
      let taken = [];
      try {
          const asking = `${ROUTE}?client_id=${encodeURIComponent(sessionId())}`;
@@ -32,7 +32,7 @@ index 9635d92..2380c11 100644
          if (!answer.ok) return 0;
          taken = (await answer.json()).jobs || [];
      } catch (error) {
-@@ -347,7 +347,7 @@ async function serveJobs() {
+@@ -61,7 +61,7 @@ async function serveJobs() {
  
      for (const job of taken) {
          const post = async (payload) => {
