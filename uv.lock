@@ -1683,7 +1683,7 @@ requires-dist = [
     { name = "comfy-angle" },
     { name = "comfy-kitchen", specifier = ">=0.2.42" },
     { name = "comfyui-embedded-docs", specifier = ">=0.5.17" },
-    { name = "comfyui-frontend-package", specifier = ">=1.59.11" },
+    { name = "comfyui-frontend-package", specifier = ">=1.59.10" },
     { name = "comfyui-manager", marker = "extra == 'manager'", specifier = ">=4.2.2" },
     { name = "comfyui-workflow-templates", specifier = ">=0.11.118" },
     { name = "cryptography", marker = "extra == 'dev'" },
@@ -8530,7 +8530,7 @@ wheels = [
 
 [[package]]
 name = "was-node-suite-comfyui"
-version = "3.14.1"
+version = "3.14.8"
 source = { virtual = "custom_nodes/was-node-suite-comfyui" }
 
 [package.optional-dependencies]
